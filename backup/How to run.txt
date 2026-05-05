@@ -1,0 +1,13 @@
+# 1. Sobe servidor
+C:\CARLA_0.9.16\CarlaUE4.exe -RenderOffScreen -quality-level=Low -world-port=2000
+
+# 2. Em outro PowerShell, roda a coleta
+cd C:\CARLA_0.9.16\meu_tcc
+C:\CARLA_0.9.16\venv_carla\Scripts\python.exe coleta_carla_v4.py --town Town03 --duration 60 --vehicles 30 --pedestrians 20 --output .\dataset\run_XYZ
+
+# 3. Gera vídeo e dashboard
+C:\CARLA_0.9.16\venv_carla\Scripts\python.exe gerar_video.py --input .\dataset\run_XYZ
+C:\CARLA_0.9.16\venv_carla\Scripts\python.exe dashboard.py --input .\dataset\run_XYZ
+
+# 4. Quando terminar tudo, mata o servidor
+taskkill /F /IM CarlaUE4-Win64-Shipping.exe
