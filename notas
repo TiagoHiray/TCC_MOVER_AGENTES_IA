@@ -1,0 +1,22 @@
+C:\CARLA_0.9.16\meu_tcc>C:\CARLA_0.9.16\venv_carla\Scripts\python.exe coleta_carla.py --town Town01 --duration 120 --vehicles 30 --pedestrians 20 --output .\dataset\run_XYZ
+INFO:  Found the required file in cache!  Carla/Maps/Nav/Town01.bin
+INFO:  Found the required file in cache!  Carla/Maps/TM/Town01.bin
+[OK] Minimap inicializado
+[OK] Conectado, mapa: Carla/Maps/Town01
+[OK] 30/30 veiculos NPC spawnados
+[OK] 20/20 pedestres spawnados
+[OK] Caminhao (ego) spawnado em Location(x=191.319992, y=133.240021, z=0.285300)
+[INFO] Anexando sensores principais...
+  + camera anexado
+  + lidar anexado
+  + gnss anexado
+  + imu anexado
+[INFO] Tentando anexar sensores de evento...
+  + collision anexado (com workaround)
+  + lane_invasion anexado (com workaround)
+[OK] Sensores ATIVOS: camera, lidar, gnss, imu, collision, lane_invasion
+[INFO] Warm-up: 30 ticks...
+[OK] VideoWriter: dataset\run_XYZ\video.mp4 @ 20 fps
+[INFO] Coletando 2400 ticks (~120.0s)
+  tick 0/2400  v=20.1km/h  pos=(199.4,133.4)  odom=0.0m  eventos=0
+  tick 40/2400  v=27.3km/h  pos=(212.7,133.5)  odom=13.3m  eventos=0
