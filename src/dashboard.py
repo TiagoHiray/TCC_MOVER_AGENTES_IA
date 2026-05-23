@@ -1,0 +1,185 @@
+#dashboard.py
+
+"""
+Dashboard visual de uma run: gera um PNG com 4 painéis pra você entender
+o que aconteceu na coleta.
+
+  Painel 1: Trajetória do caminhão no mapa (cor = velocidade)
+  Painel 2: Velocidade ao longo do tempo
+  Painel 3: Comandos do motorista (throttle/brake/steer)
+  Painel 4: Eventos marcados na timeline
+
+Uso:
+  python dashboard.py --input .\dataset\trafego_01
+
+Saída: <input>\dashboard.png
+"""
+
+import argparse
+import csv
+from pathlib import Path
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def carregar_telemetria(csv_path):
+    dados = {}
+    with open(csv_path, newline="") as f:
+        reader = csv.DictReader(f)
+        for col in reader.fieldnames:
+            dados[col] = []
+        for row in reader:
+            for col, val in row.items():
+                try:
+                    dados[col].append(float(val))
+                except ValueError:
+                    dados[col].append(val)
+    # converte pra numpy
+    for col in dados:
+        try:
+            dados[col] = np.array(dados[col], dtype=float)
+        except ValueError:
+            pass
+    return dados
+
+
+def carregar_eventos(csv_path):
+    if not csv_path.exists():
+        return []
+    eventos = []
+    with open(csv_path, newline="") as f:
+        for row in csv.DictReader(f):
+            eventos.append(row)
+    return eventos
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--output", default=None)
+    args = parser.parse_args()
+
+    pasta = Path(args.input)
+    tele_path = pasta / "telemetria.csv"
+    eventos_path = pasta / "eventos.csv"
+
+    if not tele_path.exists():
+        print(f"[ERRO] {tele_path} não existe")
+        return
+
+    print(f"[INFO] Carregando {tele_path}")
+    d = carregar_telemetria(tele_path)
+    eventos = carregar_eventos(eventos_path)
+    print(f"[INFO] {len(d['frame'])} ticks, {len(eventos)} eventos")
+
+    # Stats básicas
+    vel_kmh = d["speed_mps"] * 3.6
+    duracao = d["sim_time"][-1]
+    dist_total = np.sum(np.sqrt(np.diff(d["x"])**2 + np.diff(d["y"])**2))
+    vel_media = vel_kmh.mean()
+    vel_max = vel_kmh.max()
+    tempo_parado = (vel_kmh < 0.5).sum() * (d["sim_time"][1] - d["sim_time"][0])
+
+    print(f"\n=== ESTATÍSTICAS DA RUN ===")
+    print(f"Duração:           {duracao:.1f} s")
+    print(f"Distância total:   {dist_total:.1f} m")
+    print(f"Velocidade média:  {vel_media:.1f} km/h")
+    print(f"Velocidade máxima: {vel_max:.1f} km/h")
+    print(f"Tempo parado:      {tempo_parado:.1f} s ({100*tempo_parado/duracao:.0f}%)")
+    print(f"Eventos:           {len(eventos)}")
+    for ev in eventos[:5]:
+        print(f"   - frame {ev['frame']}: {ev['tipo']} ({ev.get('outro','')[:50]})")
+
+    # === PLOT ===
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle(f"Dashboard: {pasta.name}  |  {duracao:.0f}s, {dist_total:.0f}m, {len(eventos)} eventos",
+                 fontsize=14, fontweight="bold")
+
+    # --- Painel 1: Trajetória colorida por velocidade ---
+    ax = axes[0, 0]
+    sc = ax.scatter(d["x"], d["y"], c=vel_kmh, cmap="viridis", s=8)
+    # marca início e fim
+    ax.plot(d["x"][0], d["y"][0], "go", markersize=15, label="Início")
+    ax.plot(d["x"][-1], d["y"][-1], "rs", markersize=15, label="Fim")
+    # marca eventos no mapa
+    for ev in eventos:
+        try:
+            f = int(ev["frame"])
+            idx = np.where(d["frame"] == f)[0]
+            if len(idx) > 0:
+                i = idx[0]
+                cor = "red" if "collision" in ev["tipo"] else "orange"
+                ax.plot(d["x"][i], d["y"][i], "x", color=cor, markersize=12, markeredgewidth=3)
+        except (ValueError, KeyError):
+            continue
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    ax.set_title("Trajetória no mapa (cor = velocidade km/h)")
+    ax.legend(loc="best", fontsize=8)
+    ax.set_aspect("equal")
+    ax.grid(True, alpha=0.3)
+    plt.colorbar(sc, ax=ax, label="km/h")
+
+    # --- Painel 2: Velocidade no tempo ---
+    ax = axes[0, 1]
+    ax.plot(d["sim_time"], vel_kmh, "b-", linewidth=1)
+    ax.axhline(vel_media, color="orange", linestyle="--", alpha=0.7, label=f"Média: {vel_media:.1f} km/h")
+    # marca eventos
+    for ev in eventos:
+        try:
+            f = int(ev["frame"])
+            idx = np.where(d["frame"] == f)[0]
+            if len(idx) > 0:
+                t = d["sim_time"][idx[0]]
+                cor = "red" if "collision" in ev["tipo"] else "orange"
+                ax.axvline(t, color=cor, alpha=0.4, linewidth=1)
+        except (ValueError, KeyError):
+            continue
+    ax.set_xlabel("Tempo (s)")
+    ax.set_ylabel("Velocidade (km/h)")
+    ax.set_title("Velocidade ao longo do tempo")
+    ax.legend(loc="best", fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+    # --- Painel 3: Comandos do motorista ---
+    ax = axes[1, 0]
+    ax.plot(d["sim_time"], d["throttle"], "g-", label="Throttle (acelerador)", linewidth=1)
+    ax.plot(d["sim_time"], d["brake"], "r-", label="Brake (freio)", linewidth=1)
+    ax.plot(d["sim_time"], d["steer"], "b-", label="Steer (direção)", linewidth=1, alpha=0.7)
+    ax.set_xlabel("Tempo (s)")
+    ax.set_ylabel("Valor (-1 a 1)")
+    ax.set_title("Comandos enviados pelo autopilot")
+    ax.legend(loc="best", fontsize=8)
+    ax.grid(True, alpha=0.3)
+    ax.axhline(0, color="black", linewidth=0.5)
+
+    # --- Painel 4: Aceleração G-force ---
+    ax = axes[1, 1]
+    ax.plot(d["sim_time"], d["imu_acc_x"], label="Acc longitudinal (X)", linewidth=1)
+    ax.plot(d["sim_time"], d["imu_acc_y"], label="Acc lateral (Y)", linewidth=1, alpha=0.7)
+    # marca eventos
+    for ev in eventos:
+        try:
+            f = int(ev["frame"])
+            idx = np.where(d["frame"] == f)[0]
+            if len(idx) > 0:
+                t = d["sim_time"][idx[0]]
+                cor = "red" if "collision" in ev["tipo"] else "orange"
+                ax.axvline(t, color=cor, alpha=0.4, linewidth=1)
+        except (ValueError, KeyError):
+            continue
+    ax.set_xlabel("Tempo (s)")
+    ax.set_ylabel("Aceleração (m/s²)")
+    ax.set_title("Aceleração do IMU (picos = freadas/colisões)")
+    ax.legend(loc="best", fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    saida = Path(args.output) if args.output else pasta / "dashboard.png"
+    plt.savefig(saida, dpi=100, bbox_inches="tight")
+    print(f"\n[OK] Dashboard salvo em: {saida}")
+
+
+if __name__ == "__main__":
+    main()
