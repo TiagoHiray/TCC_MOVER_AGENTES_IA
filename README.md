@@ -14,6 +14,10 @@
 
 # Inicialização
 
+#### Versões recomendadas:  
+Python 3.12  
+Carla 0.9.16  
+
 ### 1. Iniciar Servidor
 > C:\CARLA_0.9.16\CarlaUE4.exe -RenderOffScreen -quality-level=Low -world-port=2000
 
@@ -26,4 +30,4 @@ C:\CARLA_0.9.16\venv_carla\Scripts\python.exe coleta_carla_v4.py --town Town03 -
 C:\CARLA_0.9.16\venv_carla\Scripts\python.exe dashboard.py --input .\dataset\run_XYZ  
  
 ### 4. Ao terminar, desligar o servidor
-> taskkill /F /IM CarlaUE4-Win64-Shipping.exe  
+> taskkill /F /IM CarlaUE4-Win64-Shipping.exe
