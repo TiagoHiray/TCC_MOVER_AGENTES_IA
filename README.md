@@ -9,7 +9,7 @@
 &nbsp;&nbsp;&nbsp;&nbsp;Como resultados preliminares, foi configurado o ambiente de simulação no CARLA, com execução de cenários parametrizáveis e integração de sensores como câmeras RGB, LiDAR, GNSS e IMU, permitindo a coleta sincronizada de dados multimodais. Também foi iniciado o desenvolvimento de agentes de inteligência artificial e mecanismos básicos de análise dos dados gerados.  
 &nbsp;&nbsp;&nbsp;&nbsp;Os resultados obtidos indicam a viabilidade da infraestrutura proposta como ambiente seguro, escalável e reproduzível para treinamento, validação e supervisão de agentes inteligentes aplicados à condução autônoma, contribuindo para o avanço de soluções em logística autônoma, sistemas multiagentes e manutenção preditiva em veículos off-road.  
 
-### Autores: Tiago Hiray Hisatugo, Daniel Djinishian de Briquez, Eduardo Cunha Santiago, Gabriel Silva Garcia, Eduardo Takase Sawada
+#### Autores: Tiago Hiray Hisatugo, Daniel Djinishian de Briquez, Eduardo Cunha Santiago, Gabriel Silva Garcia, Eduardo Takase Sawada
 
 
 # Inicialização
