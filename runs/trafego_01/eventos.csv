@@ -1,0 +1,7 @@
+frame,tipo,outro
+5813,lane_invasion,[carla.libcarla.LaneMarkingType.NONE]
+6704,lane_invasion,[carla.libcarla.LaneMarkingType.Broken]
+6876,lane_invasion,[carla.libcarla.LaneMarkingType.Broken]
+6924,lane_invasion,[carla.libcarla.LaneMarkingType.Broken]
+6927,lane_invasion,[carla.libcarla.LaneMarkingType.Broken]
+6934,lane_invasion,[carla.libcarla.LaneMarkingType.Broken]
