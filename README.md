@@ -31,3 +31,55 @@ C:\CARLA_0.9.16\venv_carla\Scripts\python.exe dashboard.py --input .\dataset\run
  
 ### 4. Ao terminar, desligar o servidor
 > taskkill /F /IM CarlaUE4-Win64-Shipping.exe
+
+# Resultados gerados por instância
+### 1. Vídeo do trajeto  
+
+<img width="800" height="600" alt="001424" src="https://github.com/user-attachments/assets/11250859-29d8-4223-a36b-896b19cc7d08" />
+
+
+### 2. Dashbords de telemetria
+<img width="1389" height="985" alt="dashboard" src="https://github.com/user-attachments/assets/1a356f68-646c-48d8-83a4-36c5667b2c9d" />  
+
+### 3. CSV de telemetria
+
+> frame	tipo	outro  
+1472,	lane_invasion,	[carla.libcarla.LaneMarkingType.Broken]  
+1473,	lane_invasion,	[carla.libcarla.LaneMarkingType.NONE]  
+1719,	lane_invasion,	[carla.libcarla.LaneMarkingType.NONE]  
+
+### 4. Eventos
+> Iniciado em 2026-05-05 20:28:42  
+[frame 2074] lane_invasion: [carla.libcarla.LaneMarkingType.NONE]  
+Finalizado em 2026-05-05 20:30:09  
+Total de eventos: 1  
+
+### 5. Metadata  
+> {  
+  "host": "localhost",  
+  "port": 2000,  
+  "town": "Town01",  
+  "fixed_delta_seconds": 0.05,  
+  "vehicle_filter": "vehicle.carlamotors.firetruck",  
+  "camera_width": 800,  
+  "camera_height": 600,   
+  "camera_fov": 90,  
+  "lidar_channels": 16,  
+  "lidar_range": 30.0,  
+  "lidar_points_per_second": 100000,  
+  "lidar_rotation_frequency": 20,  
+  "gnss_noise_lat_stddev": 1e-05,   
+  "gnss_noise_lon_stddev": 1e-05,  
+  "weather": "WeatherParameters(cloudiness=5.000000, precipitation=0.000000, precipitation_deposits=0.000000, wind_intensity=10.000000, sun_azimuth_angle=-1.000000, sun_altitude_angle=45.000000,   fog_density=2.000000, fog_distance=0.750000, fog_falloff=0.100000, wetness=0.000000, scattering_intensity=1.000000, mie_scattering_scale=0.030000, rayleigh_scattering_scale=0.033100, dust_storm=0.000000)",  
+  "warmup_ticks": 30,  
+  "n_vehicles": 30,  
+  "n_pedestrians": 45,  
+  "try_collision_sensor": true,   
+  "try_lane_invasion_sensor": true,   
+  "ticks_between_event_sensors": 10,  
+  "save_lidar_npy": true,  
+  "video_fps": 20,  
+  "video_codec": "mp4v",  
+  "hud_enabled": true,  
+  "started_at": "2026-05-05 21:06:14"  
+}  
