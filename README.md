@@ -32,6 +32,17 @@ C:\CARLA_0.9.16\venv_carla\Scripts\python.exe dashboard.py --input .\dataset\run
 ### 4. Ao terminar, desligar o servidor
 > taskkill /F /IM CarlaUE4-Win64-Shipping.exe
 
+# Camada cognitiva
+
+### Representação visual
+
+<img width="684" height="1269" alt="ArquiteturaAgentes" src="https://github.com/user-attachments/assets/5026f4f6-ba20-4fab-9286-82f29de5a588" />
+
+&nbsp;&nbsp;&nbsp;&nbsp; A arquitetura multiagente proposta é estruturada de forma hierárquica e modular, na qual agentes especializados desempenham funções específicas para apoiar a tomada de decisão do sistema. O fluxo tem início no ambiente do simulador CARLA, responsável por gerar dados de telemetria e sensores, como velocidade, IMU, LiDAR e câmeras. Esses dados são transmitidos via ROS 2 para um monitor de telemetria, implementado em Python, que realiza a ingestão das informações e atualiza continuamente o estado operacional do sistema.  
+&nbsp;&nbsp;&nbsp;&nbsp; A partir desse estado, um agente especialista em manutenção analisa os dados recebidos com o objetivo de identificar anomalias (outliers) e gerar eventos associados ao comportamento do veículo. Com base nessa análise, o sistema estabelece caminhos condicionais distintos: em condições normais, os eventos são apenas registrados em log para rastreabilidade e posterior análise. Já em situações críticas, as informações são encaminhadas para um agente supervisor cognitivo.  
+&nbsp;&nbsp;&nbsp;&nbsp; Esse agente supervisor atua como uma camada de decisão de alto nível, utilizando um modelo de linguagem (LLM) para interpretar rapidamente o contexto detectado e gerar explicações ou ações associadas ao evento identificado. Como resultado, o sistema pode emitir alertas ao operador e acionar comandos de segurança, como a solicitação de parada do veículo.  
+&nbsp;&nbsp;&nbsp;&nbsp; Sob a perspectiva de sistemas multiagentes, a principal característica dessa arquitetura está na especialização funcional dos agentes, em que cada componente possui responsabilidade bem definida — monitoramento, detecção de anomalias, supervisão cognitiva e resposta operacional — contribuindo coletivamente para a construção de uma camada de decisão modular, adaptativa e extensível. Isso favorece manutenção, escalabilidade e evolução progressiva do sistema durante o treinamento em ambiente virtualizado.  
+
 # Resultados gerados por instância
 ### 1. Vídeo do trajeto  
 
