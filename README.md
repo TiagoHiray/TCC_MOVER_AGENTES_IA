@@ -1,16 +1,21 @@
 # TCC - MOVER Coordenacao Logistica e Operacional de Veiculos Agricolas Autonomos
+#### Realizado por:  
+ Tiago Hiray Hisatugo,  
+ Daniel Djinishian de Briquez,  
+ Eduardo Cunha Santiago,  
+ Gabriel Silva Garcia,   
+ Eduardo Takase Sawada
 
-&nbsp;&nbsp;&nbsp;&nbsp;O avanço das tecnologias de automação, sensoriamento, inteligência artificial e comunicação veicular tem impulsionado o desenvolvimento de sistemas autônomos aplicados a operações logísticas em ambientes complexos, incluindo cenários agrícolas e off-road (BARRILE et al., 2022).  
-&nbsp;&nbsp;&nbsp;&nbsp;  Entretanto, a validação desses sistemas em campo apresenta desafios relacionados a custo, segurança, repetibilidade experimental e exposição a condições dinâmicas de difícil controle.  (PENDLETON et al., 2017; KIRAN et al., 2021).  
-&nbsp;&nbsp;&nbsp;&nbsp;Nesse contexto, este trabalho propõe o desenvolvimento de uma infraestrutura cognitiva multiagente para apoio à operação, supervisão e análise preditiva de caminhões autônomos agrícolas no âmbito do Projeto MOVER.  
-&nbsp;&nbsp;&nbsp;&nbsp;A solução é baseada em um ambiente virtual de co-simulação utilizando o simulador CARLA, empregado como gêmeo digital para criação, execução e avaliação de cenários operacionais controlados.  
-&nbsp;&nbsp;&nbsp;&nbsp;A arquitetura proposta organiza agentes inteligentes em diferentes camadas, contemplando agentes embarcados, responsáveis pelo processamento de dados sensoriais e tomada de decisão local; mecanismos de comunicação cooperativa entre veículos e infraestrutura; e agentes em nuvem, voltados à análise global, supervisão da missão, apoio à coordenação operacional e manutenção preditiva.  
-&nbsp;&nbsp;&nbsp;&nbsp;A metodologia envolve revisão bibliográfica, definição de requisitos, modelagem da arquitetura multiagente, integração com sensores virtuais, desenvolvimento de mecanismos de ingestão e armazenamento de dados, além da construção de recursos de visualização e monitoramento, como dashboards e relatórios automáticos.  
-&nbsp;&nbsp;&nbsp;&nbsp;Como resultados preliminares, foi configurado o ambiente de simulação no CARLA, com execução de cenários parametrizáveis e integração de sensores como câmeras RGB, LiDAR, GNSS e IMU, permitindo a coleta sincronizada de dados multimodais. Também foi iniciado o desenvolvimento de agentes de inteligência artificial e mecanismos básicos de análise dos dados gerados.  
-&nbsp;&nbsp;&nbsp;&nbsp;Os resultados obtidos indicam a viabilidade da infraestrutura proposta como ambiente seguro, escalável e reproduzível para treinamento, validação e supervisão de agentes inteligentes aplicados à condução autônoma, contribuindo para o avanço de soluções em logística autônoma, sistemas multiagentes e manutenção preditiva em veículos off-road.  
+# Introdução
 
-#### Autores: Tiago Hiray Hisatugo, Daniel Djinishian de Briquez, Eduardo Cunha Santiago, Gabriel Silva Garcia, Eduardo Takase Sawada
-
+&nbsp;&nbsp;&nbsp;&nbsp;O avanço das tecnologias de automação, sensoriamento e inteligência artificial tem impulsionado o desenvolvimento de veículos autônomos aplicados também ao contexto agrícola e off-road. A integração de sensores, sistemas de posicionamento GNSS e técnicas de fusão de dados permite melhorar o monitoramento operacional e a navegação autônoma desses sistemas (BARRILE et al., 2022).   
+&nbsp;&nbsp;&nbsp;&nbsp;Além disso, a integração entre comunicação veicular, computação distribuída e inteligência artificial amplia a capacidade de coordenação e supervisão de sistemas autônomos, tornando as operações mais eficientes e seguras.  
+&nbsp;&nbsp;&nbsp;&nbsp;No contexto agrícola e logístico, a utilização de Sistemas Multiagentes (SMA) tem se mostrado uma abordagem promissora para lidar com a complexidade operacional de múltiplos veículos autônomos. Nesta arquitetura, cada veículo é modelado como um agente inteligente capaz de perceber o ambiente, tomar decisões locais e interagir cooperativamente com outros agentes.   
+&nbsp;&nbsp;&nbsp;&nbsp;Nesse contexto, o projeto MOVER, desenvolvido em parceria entre o Instituto Mauá de Tecnologia, a Escola Politécnica da Universidade de São Paulo, FATEC Santo André, Mercedes-Benz, HYDAC, e FUNDEP, investiga arquiteturas inteligentes aplicadas à logística autônoma em ambientes off-road. Entre as linhas de pesquisa do projeto estão a coordenação operacional entre caminhões e colhedoras autônomas, bem como estratégias de supervisão e monitoramento inteligente.  
+&nbsp;&nbsp;&nbsp;&nbsp;Inserido nesse cenário, o presente trabalho, intitulado Projeto MOVER: Infraestrutura Cognitiva Multiagente para Operações com Caminhões Autônomos, tem como objetivo desenvolver uma infraestrutura virtual de simulação baseada no simulador CARLA para treinamento, validação e testes de agentes inteligentes aplicados à condução autônoma de caminhões.  
+&nbsp;&nbsp;&nbsp;&nbsp;O simulador CARLA permite reproduzir ambientes complexos e integrar diferentes sensores e algoritmos de percepção, planejamento e controle de forma segura (DOSOVITSKIY et al., 2017). Neste trabalho, o ambiente virtual será utilizado para o treinamento do agente responsável pela condução autônoma do caminhão e para o desenvolvimento de módulos cognitivos voltados à manutenção preditiva e supervisão operacional.  
+&nbsp;&nbsp;&nbsp;&nbsp;Além do treinamento do agente autônomo, o trabalho propõe a utilização de dados provenientes dos sensores embarcados para análise de degradação de componentes, previsão de falhas e recomendação de manutenção preventiva. Também serão desenvolvidos mecanismos de supervisão cognitiva, incluindo dashboards inteligentes, geração automática de relatórios e integração com Modelos de Large Language Models (LLMs), permitindo maior transparência e interpretabilidade das decisões tomadas pelo sistema através de linguagem natural em Logs e chat interativo.  
+&nbsp;&nbsp;&nbsp;&nbsp;Dessa forma, a utilização de um ambiente virtual baseado no simulador CARLA, associada a arquiteturas multiagentes e técnicas de inteligência artificial, representa uma alternativa segura e escalável para o desenvolvimento e validação de soluções aplicadas à condução autônoma, supervisão cognitiva e manutenção preditiva de caminhões autônomos.  
 
 # Inicialização
 
@@ -36,7 +41,8 @@ C:\CARLA_0.9.16\venv_carla\Scripts\python.exe dashboard.py --input .\dataset\run
 
 ### Representação visual
 
-<img width="684" height="1269" alt="ArquiteturaAgentes" src="https://github.com/user-attachments/assets/5026f4f6-ba20-4fab-9286-82f29de5a588" />
+<img width="684" height="1269" alt="ArquiteturaAgentes" src="https://github.com/user-attachments/assets/5026f4f6-ba20-4fab-9286-82f29de5a588" />   
+
 
 &nbsp;&nbsp;&nbsp;&nbsp; A arquitetura multiagente proposta é estruturada de forma hierárquica e modular, na qual agentes especializados desempenham funções específicas para apoiar a tomada de decisão do sistema. O fluxo tem início no ambiente do simulador CARLA, responsável por gerar dados de telemetria e sensores, como velocidade, IMU, LiDAR e câmeras. Esses dados são transmitidos via ROS 2 para um monitor de telemetria, implementado em Python, que realiza a ingestão das informações e atualiza continuamente o estado operacional do sistema.  
 &nbsp;&nbsp;&nbsp;&nbsp; A partir desse estado, um agente especialista em manutenção analisa os dados recebidos com o objetivo de identificar anomalias (outliers) e gerar eventos associados ao comportamento do veículo. Com base nessa análise, o sistema estabelece caminhos condicionais distintos: em condições normais, os eventos são apenas registrados em log para rastreabilidade e posterior análise. Já em situações críticas, as informações são encaminhadas para um agente supervisor cognitivo.  
