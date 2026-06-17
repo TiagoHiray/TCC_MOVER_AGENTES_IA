@@ -1,0 +1,248 @@
+[
+    {
+        "frame": 5667.0,
+        "tempo_simulacao": 9.55,
+        "diagnostico": "Aceleração excessiva e desaceleração abrupta detectadas.",
+        "acao": "Reduzir a velocidade e monitorar os sensores de aceleração."
+    },
+    {
+        "frame": 5763.0,
+        "tempo_simulacao": 14.35,
+        "diagnostico": "Mudanças abruptas na aceleração e direção indicam instabilidade.",
+        "acao": "Reduzir a velocidade e estabilizar a direção imediatamente."
+    },
+    {
+        "frame": 5783.0,
+        "tempo_simulacao": 15.35,
+        "diagnostico": "Aceleração excessiva e comportamento de direção instável detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção imediatamente."
+    },
+    {
+        "frame": 6052.0,
+        "tempo_simulacao": 28.8,
+        "diagnostico": "Aceleração negativa excessiva e frenagem abrupta detectadas.",
+        "acao": "Verificar sistema de frenagem e calibrar sensores de aceleração."
+    },
+    {
+        "frame": 6625.0,
+        "tempo_simulacao": 57.45,
+        "diagnostico": "Aceleração negativa excessiva e desaceleração abrupta detectadas.",
+        "acao": "Verificar sistema de frenagem e calibrar sensores de aceleração."
+    },
+    {
+        "frame": 5667.0,
+        "tempo": 9.55,
+        "diagnostico": "Aceleração excessiva e desaceleração abrupta detectadas.",
+        "acao": "Reduzir a velocidade e monitorar a estabilidade do veículo."
+    },
+    {
+        "frame": 5763.0,
+        "tempo": 14.35,
+        "diagnostico": "Aceleração excessiva e comportamento errático do veículo detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção."
+    },
+    {
+        "frame": 5783.0,
+        "tempo": 15.35,
+        "diagnostico": "Aceleração excessiva e comportamento de direção instável detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção imediatamente."
+    },
+    {
+        "frame": 6052.0,
+        "tempo": 28.8,
+        "diagnostico": "Aceleração negativa excessiva detectada, possível perda de controle.",
+        "acao": "Reduzir a velocidade e aplicar controle de estabilidade."
+    },
+    {
+        "frame": 6625.0,
+        "tempo": 57.45,
+        "diagnostico": "Aceleração negativa excessiva detectada, possível perda de controle.",
+        "acao": "Reduzir a velocidade e estabilizar a direção."
+    },
+    {
+        "frame": 6670.0,
+        "tempo": 59.7,
+        "diagnostico": "Aceleração excessiva e comportamento errático do veículo detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção."
+    },
+    {
+        "frame": 6853.0,
+        "tempo": 68.85000000000001,
+        "diagnostico": "Aceleração excessiva e frenagem abrupta detectadas.",
+        "acao": "Reduzir a velocidade e monitorar a estabilidade do veículo."
+    },
+    {
+        "frame": 6878.0,
+        "tempo": 70.10000000000001,
+        "diagnostico": "Aceleração excessiva e comportamento instável detectados.",
+        "acao": "Reduzir a aceleração e estabilizar o controle de direção."
+    },
+    {
+        "frame": 6898.0,
+        "tempo": 71.10000000000001,
+        "diagnostico": "Aceleração excessiva e comportamento instável do veículo detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção."
+    },
+    {
+        "frame": 5667.0,
+        "tempo": 9.55,
+        "diagnostico": "Aceleração excessiva e desaceleração abrupta detectadas.",
+        "acao": "Reduzir a velocidade e monitorar a estabilidade do veículo."
+    },
+    {
+        "frame": 5763.0,
+        "tempo": 14.35,
+        "diagnostico": "Aceleração excessiva e comportamento errático do veículo detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção."
+    },
+    {
+        "frame": 5783.0,
+        "tempo": 15.35,
+        "diagnostico": "Aceleração excessiva e comportamento de direção instável detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção imediatamente."
+    },
+    {
+        "frame": 6052.0,
+        "tempo": 28.8,
+        "diagnostico": "Aceleração negativa excessiva detectada, possível perda de controle.",
+        "acao": "Reduzir a velocidade e aplicar controle de estabilidade."
+    },
+    {
+        "frame": 6625.0,
+        "tempo": 57.45,
+        "diagnostico": "Aceleração negativa excessiva detectada, possível perda de controle.",
+        "acao": "Reduzir a velocidade e estabilizar a direção."
+    },
+    {
+        "frame": 6670.0,
+        "tempo": 59.7,
+        "diagnostico": "Aceleração excessiva e comportamento errático do veículo detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção."
+    },
+    {
+        "frame": 6853.0,
+        "tempo": 68.85000000000001,
+        "diagnostico": "Aceleração excessiva e frenagem abrupta detectadas.",
+        "acao": "Reduzir a velocidade e monitorar a estabilidade do veículo."
+    },
+    {
+        "frame": 6878.0,
+        "tempo": 70.10000000000001,
+        "diagnostico": "Aceleração negativa excessiva e comportamento de direção instável detectados.",
+        "acao": "Reduzir a velocidade e estabilizar a direção imediatamente."
+    },
+    {
+        "frame": 6898.0,
+        "tempo": 71.10000000000001,
+        "diagnostico": "Aceleração excessiva e comportamento instável do veículo detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção imediatamente."
+    },
+    {
+        "frame": 5667.0,
+        "tempo": 9.55,
+        "diagnostico": "Aceleração excessiva e desaceleração abrupta detectadas.",
+        "acao": "Reduzir a aceleração e monitorar os parâmetros de velocidade."
+    },
+    {
+        "frame": 5763.0,
+        "tempo": 14.35,
+        "diagnostico": "Aceleração excessiva e comportamento errático do veículo detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção."
+    },
+    {
+        "frame": 5783.0,
+        "tempo": 15.35,
+        "diagnostico": "Aceleração excessiva e manobras bruscas detectadas.",
+        "acao": "Reduzir a velocidade e estabilizar a direção."
+    },
+    {
+        "frame": 6052.0,
+        "tempo": 28.8,
+        "diagnostico": "Aceleração negativa excessiva detectada, possível perda de controle.",
+        "acao": "Reduzir a velocidade e aplicar controle de estabilidade."
+    },
+    {
+        "frame": 6625.0,
+        "tempo": 57.45,
+        "diagnostico": "Aceleração negativa excessiva detectada, possível perda de controle.",
+        "acao": "Reduzir a velocidade e estabilizar a direção."
+    },
+    {
+        "frame": 6670.0,
+        "tempo": 59.7,
+        "diagnostico": "Aceleração excessiva e comportamento errático do veículo detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção."
+    },
+    {
+        "frame": 6853.0,
+        "tempo": 68.85000000000001,
+        "diagnostico": "Aceleração excessiva e frenagem abrupta detectadas.",
+        "acao": "Reduzir a velocidade e monitorar a estabilidade do veículo."
+    },
+    {
+        "frame": 6878.0,
+        "tempo": 70.10000000000001,
+        "diagnostico": "Aceleração negativa excessiva e comportamento de direção instável detectados.",
+        "acao": "Reduzir a velocidade e estabilizar a direção imediatamente."
+    },
+    {
+        "frame": 6898.0,
+        "tempo": 71.10000000000001,
+        "diagnostico": "Aceleração excessiva e manobras bruscas detectadas.",
+        "acao": "Reduzir a velocidade e estabilizar a direção."
+    },
+    {
+        "frame": 5667.0,
+        "tempo": 9.55,
+        "diagnostico": "Aceleração excessiva e desaceleração abrupta detectadas.",
+        "acao": "Reduzir a velocidade e monitorar a estabilidade do veículo."
+    },
+    {
+        "frame": 5763.0,
+        "tempo": 14.35,
+        "diagnostico": "Aceleração excessiva e comportamento errático do veículo detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção."
+    },
+    {
+        "frame": 5783.0,
+        "tempo": 15.35,
+        "diagnostico": "Aceleração excessiva e comportamento de direção instável detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção imediatamente."
+    },
+    {
+        "frame": 6052.0,
+        "tempo": 28.8,
+        "diagnostico": "Aceleração negativa excessiva detectada, possível perda de controle.",
+        "acao": "Reduzir a velocidade e verificar sistema de frenagem."
+    },
+    {
+        "frame": 6625.0,
+        "tempo": 57.45,
+        "diagnostico": "Aceleração negativa excessiva e comportamento de direção anômalo detectados.",
+        "acao": "Reduzir a velocidade e verificar o sistema de controle de direção."
+    },
+    {
+        "frame": 6670.0,
+        "tempo": 59.7,
+        "diagnostico": "Aceleração excessiva e comportamento errático do veículo detectados.",
+        "acao": "Reduzir a aceleração e estabilizar a direção."
+    },
+    {
+        "frame": 6853.0,
+        "tempo": 68.85000000000001,
+        "diagnostico": "Frenagem abrupta detectada, possível perda de controle do veículo.",
+        "acao": "Verificar sistema de frenagem e estabilidade do veículo."
+    },
+    {
+        "frame": 6878.0,
+        "tempo": 70.10000000000001,
+        "diagnostico": "Aceleração negativa excessiva e comportamento de direção instável detectados.",
+        "acao": "Reduzir a velocidade e estabilizar a direção imediatamente."
+    },
+    {
+        "frame": 6898.0,
+        "tempo": 71.10000000000001,
+        "diagnostico": "Aceleração excessiva e manobras bruscas detectadas.",
+        "acao": "Reduzir a velocidade e estabilizar a direção."
+    }
+]
