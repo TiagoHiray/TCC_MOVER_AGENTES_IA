@@ -1,0 +1,31 @@
+Iniciando Pipeline de Avaliação de LLMs - 2026-08-23 22:22:16
+
+[qwen2.5:0.5b] Carregando modelo na RAM e rodando Warm-up...
+[qwen2.5:0.5b] Iniciando avaliação de 20 logs...
+[qwen2.5:0.5b] Concluído.
+
+[qwen2.5:1.5b] Carregando modelo na RAM e rodando Warm-up...
+[qwen2.5:1.5b] Iniciando avaliação de 20 logs...
+[qwen2.5:1.5b] Concluído.
+
+[gemma2:2b] Carregando modelo na RAM e rodando Warm-up...
+[gemma2:2b] Iniciando avaliação de 20 logs...
+[gemma2:2b] Concluído.
+
+[llama3.2:1b] Carregando modelo na RAM e rodando Warm-up...
+[llama3.2:1b] Iniciando avaliação de 20 logs...
+[llama3.2:1b] Concluído.
+
+[OK] Métricas operacionais salvas em: C:\Users\danie\Documents\tcc\git\TCC_MOVER_AGENTES_IA\src\resultados_pesquisa\metricas_operacionais_20260823-222216.csv
+
+Iniciando auditoria de alucinações via API GPT-4o...
+
+=====================================================================================
+                      RESULTADO FINAL: THROUGHPUT vs ALUCINAÇÃO                      
+=====================================================================================
+      modelo  tps_min  tps_mean  tps_max  total_alucinacoes  taxa_alucinacao_pct
+   gemma2:2b    10.51     34.72    52.79                 11                 55.0
+ llama3.2:1b    18.37     46.96    62.04                 20                100.0
+qwen2.5:0.5b   184.48    186.95   188.70                 16                 80.0
+qwen2.5:1.5b    61.68     79.71    95.35                  9                 45.0
+=====================================================================================

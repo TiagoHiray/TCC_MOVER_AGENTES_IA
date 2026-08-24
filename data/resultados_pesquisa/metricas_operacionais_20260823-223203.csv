@@ -1,0 +1,183 @@
+modelo,frame_evento,resumo_gerado,latencia_total_s,tempo_processamento_prompt_ms,tempo_geracao_ms,total_tokens_gerados,throughput_tps
+qwen2.5:0.5b,5667.0,Risco de instabilidade por desaceleração abrupta; velocidade reduzida e monitoramento dos sensores de aceleração.,0.36344432830810547,180433000.0,171399000.0,31,180.86453246518357
+qwen2.5:0.5b,5763.0,Risco de instabilidade por aceleração abrupta; velocidade reduzida e direção estabilizada.,0.24062013626098633,61005000.0,166788000.0,25,149.89087943976784
+qwen2.5:0.5b,5783.0,Risco de aceleração excessiva e direção instável; reduzir a aceleração e estabilizar a direção imediatamente.,0.2603769302368164,57582000.0,190191000.0,34,178.76765987875348
+qwen2.5:0.5b,6052.0,Risco de instabilidade por desaceleração brusca e frenagem abrupta; velocidade reduzida e controle ativado.,0.2216486930847168,46326000.0,165365000.0,30,181.41686572128322
+qwen2.5:0.5b,6625.0,Risco de instabilidade por desaceleração brusca e desaceleração abrupta; velocidade reduzida e controle ativado.,0.23486614227294922,45160000.0,179718000.0,32,178.05673332665623
+qwen2.5:0.5b,5667.0,Risco de instabilidade por desaceleração abrupta; velocidade reduzida e controle ativado.,0.18859577178955078,45061000.0,134089000.0,24,178.98559911700437
+qwen2.5:0.5b,5763.0,Risco de aceleração excessiva e comportamento errático do veículo; redução da aceleração e estabilização da direção.,0.21900081634521484,39239000.0,168243000.0,31,184.25729450853825
+qwen2.5:0.5b,5783.0,Risco de aceleração excessiva e direção instável; redução da aceleração e estabilização da direção imediatamente.,0.24324727058410645,45497000.0,186483000.0,33,176.95983011856308
+qwen2.5:0.5b,6052.0,"Risco de instabilidade por desaceleração brusca, velocidade reduzida e controle ativado.",0.19310998916625977,44915000.0,138780000.0,25,180.14123072488832
+qwen2.5:0.5b,6625.0,"Risco de instabilidade por desaceleração brusca, velocidade reduzida e controle ativado.",0.17392849922180176,21245000.0,143307000.0,25,174.45065488775847
+qwen2.5:0.5b,6670.0,Risco de aceleração excessiva e comportamento errático do veículo; redução da aceleração e estabilização da direção.,0.2244093418121338,44762000.0,171549000.0,31,180.70638709639812
+qwen2.5:0.5b,6853.0,Risco de aceleração excessiva e frenagem abrupta; velocidade reduzida e monitoramento da estabilidade.,0.19817090034484863,38632000.0,149935000.0,27,180.078033814653
+qwen2.5:0.5b,6878.0,Risco de aceleração excessiva e comportamento instável; redução da aceleração e estabilização do controle de direção.,0.22040939331054688,38753000.0,171781000.0,31,180.4623328540409
+qwen2.5:0.5b,6898.0,Risco de aceleração excessiva e comportamento instável do veículo; redução da aceleração e estabilização da direção.,0.2130122184753418,38571000.0,164866000.0,31,188.03149224218456
+qwen2.5:0.5b,5667.0,Risco de instabilidade por desaceleração abrupta; velocidade reduzida e controle ativado.,0.17069244384765625,38527000.0,128030000.0,24,187.4560649847692
+qwen2.5:0.5b,5763.0,Risco de aceleração excessiva e comportamento errático do veículo; redução da aceleração e estabilização da direção.,0.21933388710021973,38519000.0,167914000.0,31,184.61831651917052
+qwen2.5:0.5b,5783.0,Risco de aceleração excessiva e direção instável; reduzir a aceleração e estabilizar a direção imediatamente.,0.2357490062713623,45003000.0,183155000.0,34,185.63511779640194
+qwen2.5:0.5b,6052.0,"Risco de instabilidade por desaceleração brusca, velocidade reduzida e controle ativado.",0.18745017051696777,44501000.0,134937000.0,25,185.2716452863188
+qwen2.5:0.5b,6625.0,"Risco de instabilidade por desaceleração brusca, velocidade reduzida e controle ativado.",0.16361641883850098,20665000.0,134003999.0,25,186.56159656847254
+qwen2.5:0.5b,6670.0,Risco de aceleração excessiva e comportamento errático do veículo; redução da aceleração e estabilização da direção.,0.22151517868041992,44907000.0,168368000.0,31,184.1204979568564
+qwen2.5:1.5b,5667.0,Risco de instabilidade por aceleração excessiva e abrupta; velocidade reduzida e monitoramento dos sensores.,0.7408840656280518,434918000.0,296807000.0,29,97.70659047798738
+qwen2.5:1.5b,5763.0,Risco de instabilidade; velocidade reduzida e direção estabilizada.,0.3512732982635498,152451000.0,190469000.0,19,99.75376570465535
+qwen2.5:1.5b,5783.0,Risco de instabilidade por aceleração excessiva; velocidade reduzida e direção estabilizada.,0.41544079780578613,151800000.0,254895000.0,25,98.0796014044999
+qwen2.5:1.5b,6052.0,Risco de instabilidade por aceleração negativa e frenagem abrupta; verificação e calibragem do sistema de frenagem e sensores de aceleração.,0.5414276123046875,120029000.0,412069000.0,39,94.6443435444064
+qwen2.5:1.5b,6625.0,Risco de instabilidade por aceleração negativa e desaceleração abrupta; sistema de frenagem e sensores de aceleração verificados e calibrados.,0.5319268703460693,119049000.0,405100000.0,39,96.27252530239447
+qwen2.5:1.5b,5667.0,Risco de instabilidade por aceleração excessiva e desaceleração abrupta; velocidade reduzida e monitoramento da estabilidade.,0.459442138671875,119629000.0,330878000.0,32,96.71238341624405
+qwen2.5:1.5b,5763.0,Risco de instabilidade por excesso de aceleração; velocidade reduzida e controle de direção ativado.,0.38836669921875,102573000.0,278026000.0,27,97.11321962694137
+qwen2.5:1.5b,5783.0,Risco de instabilidade por aceleração excessiva; velocidade reduzida e direção estabilizada.,0.3833045959472656,119217000.0,255100000.0,25,98.00078400627206
+qwen2.5:1.5b,6052.0,Risco de instabilidade por desaceleração brusca; velocidade reduzida e controle ativado.,0.3854193687438965,119218000.0,257253000.0,25,97.18059653337376
+qwen2.5:1.5b,6625.0,Risco de instabilidade por desaceleração brusca; velocidade reduzida e estabilização ativadas.,0.3394296169281006,50340000.0,277911000.0,27,97.1534052268532
+qwen2.5:1.5b,6670.0,Risco de instabilidade por excesso de aceleração; velocidade reduzida e controle de direção ativado.,0.40697288513183594,119571000.0,277875000.0,27,97.16599190283401
+qwen2.5:1.5b,6853.0,Risco de instabilidade por aceleração excessiva e frenagem abrupta; velocidade reduzida e monitoramento da estabilidade.,0.4175119400024414,101546000.0,307076000.0,30,97.69568445596529
+qwen2.5:1.5b,6878.0,Risco de instabilidade por excesso de aceleração; reduzir velocidade e estabilizar direção.,0.3788895606994629,102225000.0,267973000.0,26,97.02470024965201
+qwen2.5:1.5b,6898.0,Risco de instabilidade por excesso de aceleração; aceleração reduzida e direção estabilizada.,0.3881359100341797,101852000.0,277479000.0,27,97.3046608932568
+qwen2.5:1.5b,5667.0,Risco de instabilidade por aceleração excessiva e desaceleração abrupta; velocidade reduzida e monitoramento da estabilidade.,0.44129133224487305,101731000.0,331172000.0,32,96.62652639715917
+qwen2.5:1.5b,5763.0,Risco de instabilidade por excesso de aceleração; velocidade reduzida e controle de direção ativado.,0.38887834548950195,102284000.0,277909000.0,27,97.15410440108093
+qwen2.5:1.5b,5783.0,Risco de instabilidade por aceleração excessiva; velocidade reduzida e direção estabilizada.,0.3831658363342285,119221000.0,253817000.0,25,98.49616061965904
+qwen2.5:1.5b,6052.0,Risco de instabilidade por desaceleração brusca; velocidade reduzida e controle ativado.,0.3846864700317383,119711000.0,256748000.0,25,97.37174194151464
+qwen2.5:1.5b,6625.0,Risco de instabilidade por desaceleração brusca; velocidade reduzida e estabilização ativadas.,0.33771729469299316,50266000.0,279169000.0,27,96.71560954117399
+qwen2.5:1.5b,6670.0,Risco de instabilidade por excesso de aceleração; velocidade reduzida e controle de direção ativado.,0.4084031581878662,122448000.0,277357000.0,27,97.34746193533965
+gemma2:2b,5667.0,Aceleração excessiva e instabilidade; velocidade reduzida e monitoramento.,1.0420870780944824,711991000.0,317477000.0,19,59.846855047767235
+gemma2:2b,5763.0,Instabilidade detectada; velocidade reduzida e direção estabilizada.,0.8675322532653809,592861000.0,264414000.0,16,60.51116809246107
+gemma2:2b,5783.0,Risco de instabilidade por aceleração excessiva e direção instável; velocidade reduzida e estabilização da direção.,1.1860699653625488,703531000.0,472849000.0,28,59.21552123405146
+gemma2:2b,6052.0,Risco de instabilidade por frenagem abrupta; verificação de sistema de frenagem e sensores.,1.135157585144043,703448000.0,420474000.0,25,59.456708381493264
+gemma2:2b,6625.0,Risco de instabilidade por desaceleração abrupta; verificação de sistema de frenagem e sensores.,1.152639627456665,702787000.0,440826000.0,26,58.980187194040276
+gemma2:2b,5667.0,Risco de instabilidade por aceleração e desaceleração abrupta; velocidade reduzida e monitoramento da estabilidade.,1.1947755813598633,703646000.0,490724000.0,29,59.096355588885
+gemma2:2b,5763.0,Aceleração excessiva e direção errática; velocidade reduzida e estabilização da direção.,0.9952578544616699,591360000.0,385657000.0,23,59.638487049372884
+gemma2:2b,5783.0,Aceleração excessiva e direção instável; velocidade reduzida e estabilização imediata.,1.1014652252197266,703336000.0,387829000.0,23,59.30448728692285
+gemma2:2b,6052.0,Risco de perda de controle por desaceleração excessiva; velocidade reduzida e controle ativado.,0.997128963470459,591360000.0,405661000.0,24,59.162699889809474
+gemma2:2b,6625.0,Risco de perda de controle por aceleração negativa excessiva; velocidade reduzida e estabilização da direção.,1.0511884689331055,591224000.0,441292000.0,26,58.91790469802307
+gemma2:2b,6670.0,Aceleração excessiva e direção errática; velocidade reduzida e estabilização da direção.,0.987152099609375,590419000.0,386991000.0,23,59.432906708424746
+gemma2:2b,6853.0,Aceleração e frenagem abrupta; velocidade reduzida e monitoramento da estabilidade.,1.0989911556243896,702711000.0,387464000.0,23,59.36035347800054
+gemma2:2b,6878.0,Aceleração excessiva e instabilidade; velocidade reduzida e controle de direção ativado.,0.9632952213287354,592506000.0,370362000.0,22,59.40134247033983
+gemma2:2b,6898.0,Risco de instabilidade por aceleração excessiva; velocidade reduzida e estabilização da direção.,1.0148990154266357,590612000.0,405768000.0,24,59.14709883480215
+gemma2:2b,5667.0,Risco de instabilidade por aceleração e desaceleração abrupta; velocidade reduzida e monitoramento da estabilidade.,1.2079262733459473,703613000.0,495511000.0,29,58.52544141300597
+gemma2:2b,5763.0,Aceleração excessiva e direção errática; velocidade reduzida e estabilização da direção.,0.9898161888122559,589921000.0,390133000.0,23,58.95425406207627
+gemma2:2b,5783.0,Aceleração excessiva e direção instável; velocidade reduzida e estabilização imediata.,1.1007075309753418,702761000.0,387723000.0,23,59.320700603265735
+gemma2:2b,6052.0,Risco de perda de controle por desaceleração excessiva; velocidade reduzida e controle ativado.,1.017951250076294,596926000.0,410479000.0,24,58.46827730529455
+gemma2:2b,6625.0,Risco de perda de controle por aceleração negativa excessiva; velocidade reduzida e estabilização da direção.,1.044490098953247,591608000.0,442696000.0,26,58.73104794260622
+gemma2:2b,6670.0,Aceleração excessiva e direção errática; velocidade reduzida e estabilização da direção.,0.991344690322876,592875000.0,389083000.0,23,59.11335113587589
+llama3.2:1b,5667.0,Risco de aceleração excessiva e desaceleração abrupta; reduzir a velocidade e monitorar os sensores de aceleração.,0.6978662014007568,331804000.0,355934000.0,35,98.33283698663236
+llama3.2:1b,5763.0,"Risco de instabilidade por desaceleração brusca; velocidade reduzida e controle ativado.
+Reduzir velocidade e estabilizar a direção imediatamente.
+Reduzir velocidade e aplicar controle de estabilidade.",0.6967563629150391,119940000.0,566977000.0,55,97.00569864386034
+llama3.2:1b,5783.0,"Risco de colisão com obstáculos próximos.
+Aceleração excessiva e comportamento de direção instável detectados.
+Reduzir a aceleração e estabilizar a direção imediatamente.",0.6434671878814697,119021000.0,515808999.0,50,96.93510601198332
+llama3.2:1b,6052.0,"Risco de colisão com obstáculos próximos; velocidade reduzida e controle ativado.
+ 
+Risco de colisão com obstáculos próximos; velocidade reduzida e controle ativado.
+ 
+Risco de colisão com obstáculos próximos; velocidade reduzida e controle ativado.
+ 
+Risco de colisão com obstáculos próximos; velocidade reduzida e controle ativado.
+ 
+Risco de colisão com obstáculos próximos; velocidade reduzida e controle ativado.
+ 
+Risco de colisão com obstáculos próximos; velocidade reduzida e controle ativado.
+ 
+Risco de colisão com obstáculos próximos; velocidade reduzida e controle ativado.",1.9492740631103516,93531000.0,1847390000.0,175,94.72823821716042
+llama3.2:1b,6625.0,Risco de aceleração excessiva e desaceleração abrupta; verificar sistema de frenagem e calibrar sensores de aceleração.,0.4535541534423828,92704000.0,346397000.0,34,98.1532749994948
+llama3.2:1b,5667.0,"Risco de colisão por aceleração excessiva e desaceleração abrupta.
+Aceleração excessiva: 10-15 km/h.
+Desaceleração abrupto: 5-10 km/h.
+Redução da velocidade: 5-10 km/h.
+Monitoramento da estabilidade do veículo.",0.8336277008056641,94361000.0,730545000.0,70,95.81887494952399
+llama3.2:1b,5763.0,Risco de colisão; velocidade reduzida e controle ativado.,0.2665078639984131,79204000.0,178935000.0,18,100.59518819683124
+llama3.2:1b,5783.0,Risco de colisão com obstáculos próximos; redução da velocidade e estabilização da direção imediatamente.,0.4290335178375244,94182000.0,326769000.0,32,97.92850607003724
+llama3.2:1b,6052.0,"Risco de perda de controle e instabilidade por desaceleração brusca.
+
+Aceleração negativa excessiva detectada, velocidade reduzida e controle ativado.",0.5146489143371582,94397000.0,411261000.0,40,97.26183615757391
+llama3.2:1b,6625.0,"Risco de perda de controle e instabilidade por desaceleração brusca.
+
+Aceleração negativa excessiva detectada, velocidade reduzida e controle ativado.",0.4596560001373291,40119000.0,411242000.0,40,97.26632980094446
+llama3.2:1b,6670.0,"Risco de colisão, aceleração excessiva e comportamento errático.
+
+Aceleração excessiva e comportamento errático podem causar colisão com obstáculos ou outros veículos. Reduzir a aceleração e estabilizar a direção pode evitar colisões.",0.768362283706665,93894000.0,666542000.0,64,96.01795535765189
+llama3.2:1b,6853.0,"Risco de colisão por aceleração excessiva e frenagem abrupta.
+Aceleração excessiva: 10-15 km/h.
+Frenagem abrupta: 20-25 km/h.
+Redução da velocidade: 5-10 km/h.
+Monitoramento da estabilidade: Continuação do monitoramento da velocidade e da estabilidade do veículo.",0.9272096157073975,79347000.0,839979000.0,80,95.24047625000148
+llama3.2:1b,6878.0,"Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de direção.
+ 
+Risco de colisão com obstáculos próximos; redução da aceleração e estabilização do controle de dirección.",6.6510865688323975,79384000.0,6562053000.0,589,89.75849478814024
+llama3.2:1b,6898.0,"Risco de colisão; velocidade reduzida e controle ativado.
+Redução da aceleração; estabilização da direção.
+Redução da velocidade; controle de estabilidade.
+Redução da aceleração; estabilização da direção.
+Redução da velocidade; controle de estabilidade.
+Redução da aceleração; estabilização da direção.
+Redução da velocidade; controle de estabilidade.
+Redução da aceleração; estabilização da direção.
+Redução da velocidade; controle de estabilidade.
+Redução da velocidade; controle de estabilidade.",2.138887882232666,106336000.0,2012711000.0,129,64.0926591050578
+llama3.2:1b,5667.0,"Risco de colisão; velocidade reduzida e controle ativado.
+Risco de colisão; velocidade reduzida e controle ativado.
+Risco de colisão; velocidade reduzida e controle ativado.
+Risco de colisão; velocidade reduzida e controle ativado.
+Risco de colisão; velocidade reduzida e controle ativado.
+Risco de colisão; velocidade reduzida e controle ativado.",1.7072985172271729,102129000.0,1590565000.0,103,64.75686312725352
+llama3.2:1b,5763.0,"Risco de colisão; aceleração reduzida e estabilização ativada.
+ 
+Risco de colisão; aceleração reduzida e estabilização ativada.
+ 
+Risco de colisão; aceleração reduzida e estabilização ativada.
+ 
+Risco de colisão; aceleração reduzida e estabilização ativada.
+ 
+Risco de colisão; aceleração reduzida e estabilização ativada.
+ 
+Risco de colisão; aceleração reduzida e estabilização ativada.
+ 
+Risco de colisão; aceleração reduzida e estabilização ativada.
+ 
+Risco de colisão; aceleração reduzida e estabilização ativada.",2.292170524597168,101079000.0,2182042000.0,168,76.99210189354741
+llama3.2:1b,5783.0,"Risco de colisão com obstáculos próximos.
+Aceleração excessiva e comportamento de direção instável detectados.
+Reduzir a aceleração e estabilizar a direção imediatamente.",0.6290693283081055,94059000.0,520174000.0,50,96.12168236013333
+llama3.2:1b,6052.0,"Risco de perda de controle e instabilidade por desaceleração brusca.
+
+Aceleração negativa excessiva detectada, velocidade reduzida e controle ativado.",0.516871452331543,93883000.0,413533000.0,40,96.72746794088985
+llama3.2:1b,6625.0,"Risco de perda de controle e instabilidade por aceleração excessiva.
+
+Aceleração negativa excessiva detectada, velocidade reduzida e controle ativado.",0.4435126781463623,40936000.0,393693000.0,38,96.52190920336403
+llama3.2:1b,6670.0,"Risco de colisão, aceleração excessiva e comportamento errático.
+
+Aceleração excessiva e comportamento errático podem causar colisão com obstáculos ou outros veículos. Reduzir a aceleração e estabilizar a direção pode ajudar a evitar colisão.",1.0402922630310059,94538000.0,937577000.0,67,71.4607973531774
