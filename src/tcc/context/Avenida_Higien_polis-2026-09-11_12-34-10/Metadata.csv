@@ -1,0 +1,2 @@
+version,device name,recording epoch time,recording time,recording timezone,platform,appVersion,device id,sensors,sampleRateMs,standardisation,platform version
+3,SM-S921B,1789130050594,2026-09-11_12-34-10,America/Sao_Paulo,android,1.64,724af6a6-c7ef-470b-906f-8d1be25ad2eb,Accelerometer|Compass|Barometer|Location|Annotation|TotalAcceleration|AccelerometerUncalibrated,10|10|0|0||10|10,false,36
