@@ -46,7 +46,7 @@ CONFIG = {
     "video_fps": 20,               # 1/0.05 = 20, casa com fixed_delta
     "video_codec": "mp4v",
     "hud_enabled": True,
-    "seg_enabled": True,           # camera de segmentacao semantica (video lado a lado)
+    "seg_enabled": False,           # camera de segmentacao semantica (video lado a lado)
     # DADOS EXTERNOS DO CAMINHAO (o CARLA recebe dados e simula o estado do ego)
     "external_data_enabled": True,   # inicia com dados mockados e devolve o controle ao autopilot
     "data_control_mode": "control",  # "control" (throttle/brake/steer) ou "kinematic" (impoe velocidade)

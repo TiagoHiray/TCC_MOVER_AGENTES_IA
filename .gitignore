@@ -1,4 +1,8 @@
 .env
 venv
 venv/
-.forge/
+.venv
+.forge
+metadata.json
+env_carla
+runs
