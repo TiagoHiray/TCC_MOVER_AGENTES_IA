@@ -51,13 +51,25 @@ python .\src\coleta_carla.py --town Town03 --duration 30 --vehicles 60 --pedestr
 #### Se a ativacao da venv for bloqueada pela politica do PowerShell, rode sem ativar:
  .\env_carla\Scripts\python.exe .\src\coleta_carla.py --town Town03 --duration 30 --vehicles 60 --pedestrians 60 --output .\runs\run_001
 
+#### Coleta no mapa do campus Mauá (opcional)
+Mapa OpenDRIVE do campus IMT, obtido de [rtbuhler/mapa_imt](https://github.com/rtbuhler/mapa_imt), disponível em `data/mapa_imt/`:
+- `mapa_final_3d.xodr`: com altimetria, vias de ida e volta
+- `mapa_final_plano_2vias.xodr`: plano, vias de ida e volta
+
+Com `--xodr` o mundo é gerado a partir do arquivo e o `--town` é ignorado (o caminho fica salvo em `condicoes_iniciais.json`, então `--replay` reproduz o mesmo mapa). Use poucos NPCs, o mapa é pequeno:
+
+python .\src\coleta_carla.py --xodr .\data\mapa_imt\mapa_final_3d.xodr --duration 30 --vehicles 5 --pedestrians 5 --output .\runs\run_maua
+
+Para apenas abrir o mapa no CARLA (com barreiras nas bordas das vias), sem coletar:
+
+python .\data\mapa_imt\carregar_xodr_3d.py
+
 #### Observacoes:
  - O wheel do CARLA requer Python 3.12 de 64 bits.
  - O servidor precisa estar iniciado antes de rodar a coleta (localhost:2000).
  - Para sair da venv, use: deactivate
 
 ### 6. Gerar vídeos e dashboards
-> C:\CARLA_0.9.16\venv_carla\Scripts\python.exe gerar_video.py --input .\dataset\run_XYZ  
 C:\CARLA_0.9.16\venv_carla\Scripts\python.exe dashboard.py --input .\dataset\run_XYZ  
  
 ### 7. Ao terminar, desligar o servidor
