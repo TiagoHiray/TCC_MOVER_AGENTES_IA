@@ -1,0 +1,7 @@
+sim_time,manobra,throttle,brake,steer,target_speed_kmh,hand_brake,reverse
+0.0,acelerar,0.6,0.0,0.0,40.0,False,False
+5.0,cruzeiro,0.421,0.0,0.0,40.0,False,False
+10.0,cruzeiro,0.445,0.0,0.0,40.0,False,False
+15.0,frear,0.0,0.6,0.0,15.0,False,False
+20.0,cruzeiro,0.409,0.0,0.0,40.0,False,False
+25.0,parar,0.0,1.0,0.0,0.0,False,False
