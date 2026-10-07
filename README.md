@@ -28,7 +28,18 @@ Carla 0.9.16
 
 ### 2. Em outro PowerShell, rodar a coleta
 > cd C:\CARLA_0.9.16\meu_tcc  
-C:\CARLA_0.9.16\venv_carla\Scripts\python.exe coleta_carla_v4.py --town Town03 --duration 60 --vehicles 30 --pedestrians 20 --output .\dataset\run_XYZ
+C:\CARLA_0.9.16\venv_carla\Scripts\python.exe coleta_carla.py --town Town03 --duration 60 --vehicles 30 --pedestrians 20 --output .\dataset\run_XYZ
+
+#### 2.1 (Opcional) Coleta no mapa do campus Mauá
+Mapa OpenDRIVE do campus IMT, obtido de [rtbuhler/mapa_imt](https://github.com/rtbuhler/mapa_imt), disponível em `data/mapa_imt/`:
+- `mapa_final_3d.xodr`: com altimetria, vias de ida e volta
+- `mapa_final_plano_2vias.xodr`: plano, vias de ida e volta
+
+Com `--xodr` o mundo é gerado a partir do arquivo e o `--town` é ignorado (o caminho fica salvo em `condicoes_iniciais.json`, então `--replay` reproduz o mesmo mapa):
+> C:\CARLA_0.9.16\venv_carla\Scripts\python.exe src\coleta_carla.py --xodr data\mapa_imt\mapa_final_3d.xodr --duration 60 --vehicles 5 --pedestrians 5 --output .\dataset\run_maua
+
+Para apenas abrir o mapa no CARLA (com barreiras nas bordas das vias), sem coletar:
+> C:\CARLA_0.9.16\venv_carla\Scripts\python.exe data\mapa_imt\carregar_xodr_3d.py
 
 ### 3. Gerar vídeos e dashboards
 > C:\CARLA_0.9.16\venv_carla\Scripts\python.exe gerar_video.py --input .\dataset\run_XYZ  

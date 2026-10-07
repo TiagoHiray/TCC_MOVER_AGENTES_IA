@@ -20,6 +20,7 @@ CONFIG = {
     "host": "localhost",
     "port": 2000,
     "town": "Town03",
+    "xodr": None,                  # caminho de um .xodr; se definido, substitui 'town'
     "fixed_delta_seconds": 0.05,
     "vehicle_filter": "vehicle.carlamotors.firetruck",
     "camera_width": 800,
@@ -353,7 +354,22 @@ class Coletor:
         client = carla.Client(self.cfg["host"], self.cfg["port"])
         client.set_timeout(30.0)
         self.client = client
-        self.world = client.load_world(self.cfg["town"])
+        if self.cfg.get("xodr"):
+            client.set_timeout(120.0)
+            xodr_content = Path(self.cfg["xodr"]).read_text(encoding="utf-8")
+            params = carla.OpendriveGenerationParameters(
+                vertex_distance=0.5,
+                max_road_length=50.0,
+                wall_height=0.0,
+                additional_width=0.6,
+                smooth_junctions=True,
+                enable_mesh_visibility=True,
+                enable_pedestrian_navigation=True,
+            )
+            self.world = client.generate_opendrive_world(xodr_content, params)
+            client.set_timeout(30.0)
+        else:
+            self.world = client.load_world(self.cfg["town"])
         self.world.set_weather(self.cfg["weather"])
 
         settings = self.world.get_settings()
@@ -378,6 +394,20 @@ class Coletor:
         print("[OK] Minimap inicializado")
         print(f"[OK] Conectado, mapa: {self.map.name}")
 
+    def _spawn_points(self):
+        pts = self.map.get_spawn_points()
+        if pts:
+            return pts
+        # Mapas OpenDRIVE avulsos podem nao trazer spawn points: deriva dos waypoints
+        pts = []
+        for wp in self.map.generate_waypoints(10.0):
+            if wp.lane_type != carla.LaneType.Driving:
+                continue
+            tf = wp.transform
+            tf.location.z += 0.5
+            pts.append(tf)
+        return pts
+
     def spawnar_trafego(self):
         n = self.cfg["n_vehicles"]
         if n <= 0:
@@ -385,7 +415,7 @@ class Coletor:
         bp_lib = self.world.get_blueprint_library()
         vehicle_bps = bp_lib.filter("vehicle.*")
         vehicle_bps = [bp for bp in vehicle_bps if int(bp.get_attribute("number_of_wheels")) == 4]
-        spawn_points = self.map.get_spawn_points()
+        spawn_points = self._spawn_points()
         random.shuffle(spawn_points)
         spawned = 0
         for spawn in spawn_points:
@@ -454,7 +484,7 @@ class Coletor:
             except RuntimeError:
                 print("[WARN] Spawn forcado ocupado; usando spawn aleatorio")
         if self.vehicle is None:
-            spawn_points = self.map.get_spawn_points()
+            spawn_points = self._spawn_points()
             for spawn in random.sample(spawn_points, len(spawn_points)):
                 try:
                     self.vehicle = self.world.spawn_actor(veh_bp, spawn)
@@ -492,6 +522,7 @@ class Coletor:
         tf = self.spawn_transform
         cond = {
             "town": self.cfg["town"],
+            "xodr": self.cfg.get("xodr"),
             "run_seed": self.cfg.get("run_seed"),
             "data_seed": self.cfg.get("data_seed"),
             "weather": str(self.cfg["weather"]),
@@ -912,6 +943,8 @@ def main():
     parser.add_argument("--duration", type=float, default=60.0)
     parser.add_argument("--output", type=str, default="./dataset/run_001")
     parser.add_argument("--town", type=str, default=CONFIG["town"])
+    parser.add_argument("--xodr", type=str, default=None,
+                        help="Gera o mundo a partir de um .xodr (ex.: data/mapa_imt/mapa_final_3d.xodr); ignora --town")
     parser.add_argument("--vehicles", type=int, default=CONFIG["n_vehicles"])
     parser.add_argument("--pedestrians", type=int, default=CONFIG["n_pedestrians"])
     parser.add_argument("--no-hud", action="store_true", help="Desativa overlay no video")
@@ -928,6 +961,12 @@ def main():
     args = parser.parse_args()
 
     CONFIG["town"] = args.town
+    if args.xodr:
+        xodr_path = Path(args.xodr).resolve()
+        if not xodr_path.is_file():
+            sys.exit(f"[ERRO] .xodr nao encontrado: {xodr_path}")
+        CONFIG["xodr"] = str(xodr_path)
+        CONFIG["town"] = xodr_path.stem
     CONFIG["n_vehicles"] = args.vehicles
     CONFIG["n_pedestrians"] = args.pedestrians
     if args.no_hud:
@@ -947,6 +986,7 @@ def main():
         with open(args.replay) as f:
             cond = json.load(f)
         CONFIG["town"] = cond.get("town", CONFIG["town"])
+        CONFIG["xodr"] = cond.get("xodr")
         CONFIG["run_seed"] = cond.get("run_seed")
         CONFIG["data_seed"] = cond.get("data_seed")
         CONFIG["data_control_mode"] = cond.get("data_control_mode", CONFIG["data_control_mode"])
