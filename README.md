@@ -23,29 +23,44 @@
 Python 3.12  
 Carla 0.9.16  
 
-### 1. Iniciar Servidor
-> C:\CARLA_0.9.16\CarlaUE4.exe -RenderOffScreen -quality-level=Low -world-port=2000
+## Passo a passo no PowerShell (Windows)
 
-### 2. Em outro PowerShell, rodar a coleta
-> cd C:\CARLA_0.9.16\meu_tcc  
-C:\CARLA_0.9.16\venv_carla\Scripts\python.exe coleta_carla.py --town Town03 --duration 60 --vehicles 30 --pedestrians 20 --output .\dataset\run_XYZ
+### 1. Inicia o CARLA sem janela, em um primeiro terminal
+cd C:\CARLA_0.9.16
+Start-Process -FilePath .\CarlaUE4.exe -ArgumentList '-RenderOffScreen -quality-level=Low -world-port=2000' -WorkingDirectory C:\CARLA_0.9.16
 
-#### 2.1 (Opcional) Coleta no mapa do campus Mauá
-Mapa OpenDRIVE do campus IMT, obtido de [rtbuhler/mapa_imt](https://github.com/rtbuhler/mapa_imt), disponível em `data/mapa_imt/`:
-- `mapa_final_3d.xodr`: com altimetria, vias de ida e volta
-- `mapa_final_plano_2vias.xodr`: plano, vias de ida e volta
+### 2. Em um segundo terminal, cria a venv (somente na primeira vez)
+cd C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA
+py -3.12 --version
+py -3.12 -m venv env_carla
 
-Com `--xodr` o mundo é gerado a partir do arquivo e o `--town` é ignorado (o caminho fica salvo em `condicoes_iniciais.json`, então `--replay` reproduz o mesmo mapa):
-> C:\CARLA_0.9.16\venv_carla\Scripts\python.exe src\coleta_carla.py --xodr data\mapa_imt\mapa_final_3d.xodr --duration 60 --vehicles 5 --pedestrians 5 --output .\dataset\run_maua
+### 3. Ativa a venv e instala as dependencias (somente na primeira vez)
+.\env_carla\Scripts\Activate
+python -m pip install --upgrade pip
+python -m pip install C:\CARLA_0.9.16\PythonAPI\carla\dist\carla-0.9.16-cp312-cp312-win_amd64.whl
+python -m pip install numpy opencv-python
 
-Para apenas abrir o mapa no CARLA (com barreiras nas bordas das vias), sem coletar:
-> C:\CARLA_0.9.16\venv_carla\Scripts\python.exe data\mapa_imt\carregar_xodr_3d.py
+### 4. Confirma que CARLA, OpenCV (cv2) e NumPy podem ser importados
+python -c "import carla, cv2, numpy; print('Imports OK')"
 
-### 3. Gerar vídeos e dashboards
+### 5. Executa a coleta (a partir da raiz do projeto)
+python .\src\coleta_carla.py --duration 30
+#### Exemplo com parametros explicitos:
+python .\src\coleta_carla.py --town Town03 --duration 30 --vehicles 60 --pedestrians 60 --output .\runs\run_001
+
+#### Se a ativacao da venv for bloqueada pela politica do PowerShell, rode sem ativar:
+ .\env_carla\Scripts\python.exe .\src\coleta_carla.py --town Town03 --duration 30 --vehicles 60 --pedestrians 60 --output .\runs\run_001
+
+#### Observacoes:
+ - O wheel do CARLA requer Python 3.12 de 64 bits.
+ - O servidor precisa estar iniciado antes de rodar a coleta (localhost:2000).
+ - Para sair da venv, use: deactivate
+
+### 6. Gerar vídeos e dashboards
 > C:\CARLA_0.9.16\venv_carla\Scripts\python.exe gerar_video.py --input .\dataset\run_XYZ  
 C:\CARLA_0.9.16\venv_carla\Scripts\python.exe dashboard.py --input .\dataset\run_XYZ  
  
-### 4. Ao terminar, desligar o servidor
+### 7. Ao terminar, desligar o servidor
 > taskkill /F /IM CarlaUE4-Win64-Shipping.exe
 
 # Camada cognitiva
