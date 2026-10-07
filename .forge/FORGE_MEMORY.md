@@ -27,7 +27,8 @@
 - README referencia nomes antigos (`coleta_carla_v4.py`, `gerar_video.py`).
 
 ## Status
-- Contexto carregado; nenhuma alteracao de codigo feita ainda.
+- Mapa do campus IMT (repo publico rtbuhler/mapa_imt) baixado em `data/mapa_imt/`: mapa_final_3d.xodr, mapa_final_plano_2vias.xodr, carregar_xodr_3d.py (path ajustado p/ mesma pasta). Carrega via `client.generate_opendrive_world` + barreiras nas bordas.
+- `coleta_carla.py` aceita `--xodr <arquivo>` (generate_opendrive_world, fallback de spawn points via waypoints, salvo em condicoes_iniciais p/ replay). Sem barreiras na coleta. README secao 2.1 documenta. Nao testado com CARLA ainda.
 
 ## Proximos passos sugeridos
 1. Padronizar paths (relativos a raiz via `Path(__file__)`) em poc-agents.
