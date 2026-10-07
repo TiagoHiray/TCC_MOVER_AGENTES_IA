@@ -5,4 +5,3 @@ venv/
 .forge
 metadata.json
 env_carla
-runs
