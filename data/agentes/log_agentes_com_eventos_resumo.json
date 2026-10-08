@@ -1,0 +1,37 @@
+{
+  "blocos": 16,
+  "entradas": 39,
+  "logs": 30,
+  "logs_continuacao": 3,
+  "logs_mesclados": 1,
+  "problemas": 9,
+  "problemas_por_nivel": {
+    "atencao": 6,
+    "critico": 3
+  },
+  "problemas_por_causa": {
+    "irregularidade_via": 7,
+    "conducao_brusca": 2
+  },
+  "problemas_por_evento": {
+    "soltura_freio": 7,
+    "frenagem_brusca": 1,
+    "arrancada_brusca": 1
+  },
+  "logs_atipicos_ml": 9,
+  "texto_origem": {
+    "modelo": 39
+  },
+  "motivos_texto_modelo": {
+    "erro do LLM: ConnectionError: Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download": 2,
+    "LLM desligado após falhas seguidas": 34,
+    "continuação de trecho estável (sem LLM)": 3
+  },
+  "chamadas_llm": {
+    "chamadas": 2,
+    "erros": 2
+  },
+  "latencia_bloco_media_s": 0.55,
+  "latencia_bloco_max_s": 8.078,
+  "duracao_bloco_s": 10.0
+}

@@ -1,0 +1,97 @@
+# =============================================================================
+# Tratamento dos dados do Sensor Logger -> formato de telemetria do CARLA
+# Caminhos relativos são resolvidos a partir da raiz do repositório.
+# =============================================================================
+
+entrada:
+  pasta: data/csv_maua           # pasta exportada pelo Sensor Logger (CSV)
+
+saida:
+  pasta: data/tratado
+  telemetria: telemetria_tratada.csv
+  gps: gps_fixes.csv
+  calibracao: calibracao_amostras.csv
+  relatorio: relatorio_tratamento.json
+  figuras: figuras
+
+amostragem:
+  imu_hz: 100        # grade uniforme intermediária dos sensores inerciais
+  saida_hz: 20       # igual ao tick síncrono do coleta_carla (fixed_delta_seconds = 0.05)
+
+sinais:
+  # Convenção do Sensor Logger para aceleração e gravidade:
+  #   iOS sem "standardisation": aceleração com sinal invertido (-1), gravidade apontando para baixo
+  #   Android, ou iOS com "standardisation": sinal físico (+1), gravidade apontando para cima
+  # "auto" decide pelo Metadata.csv; use -1 ou 1 para forçar.
+  sinal_aceleracao: auto
+
+referencia_geo:
+  # Origem do plano local (leste, norte). Precisa ser a MESMA origem do mapa .xodr do CARLA.
+  #   osm          -> centro do <bounds> do arquivo OSM (o mapa do campus é gerado desse OSM)
+  #   primeiro_fix -> primeiro fix GPS da gravação
+  #   manual       -> lat0 / lon0 abaixo
+  modo: osm
+  arquivo_osm: data/openstreetviewmap.osm   # movido de src/tcc/context/ no commit dec153ab do repositório
+  lat0: null
+  lon0: null
+
+filtros:
+  ordem: 4
+  imu_corte_hz: 4.0          # remove vibração do motor antes de reamostrar para 20 Hz
+  calibracao_corte_hz: 0.3   # banda usada para comparar IMU x GPS
+  defasagem_corte_hz: 0.25   # banda usada para estimar a defasagem do GPS
+  jerk_corte_hz: 1.5         # suavização da aceleração antes de derivar (jerk)
+  manobra_corte_hz: 1.0      # suavização usada só para rotular manobras
+  altitude_corte_hz: 0.2
+
+calibracao:
+  vel_min_mps: 2.0           # amostras mais lentas não entram nos ajustes
+  # velocidade: atraso que melhor alinha dv/dt do GPS com a aceleração do IMU (padrão)
+  # rumo: alinha a taxa de rumo do GPS com o giroscópio (o iOS repete rumos antigos)
+  defasagem_metodo: velocidade
+  defasagem_max_s: 2.0
+  defasagem_passo_s: 0.05
+  defasagem_fixa_s: null     # um número aqui força a defasagem do GPS (s)
+  corrigir_ganho: true       # aplica o ganho por eixo ajustado contra o GPS
+  r2_min_ganho: 0.5          # só corrige o ganho se o ajuste for bom
+  ganho_min: 0.7
+  ganho_max: 1.3
+  rampa_janela_m: 25         # janela da derivada altitude x distância
+
+fusao:
+  fator_sigma_pos: 0.7       # sigma por eixo = fator * horizontalAccuracy
+  sigma_pos_min_m: 1.5
+  fator_sigma_vel: 0.5       # sigma = fator * speedAccuracy
+  sigma_vel_min_mps: 0.2
+  sigma_rumo_min_graus: 2.0
+  vel_min_rumo_mps: 1.5      # abaixo disso o rumo do GPS é descartado
+  # todos | frescos | nenhum. O iOS repete o rumo anterior em muitos fixes (valor velho);
+  # "frescos" usa só os rumos que mudaram desde o fix anterior.
+  usar_rumo_gps: frescos
+  porta_chi2_pos: 13.8       # rejeita fixes com Mahalanobis^2 acima disso (99,9 %, 2 g.l.)
+  ruido_processo:
+    posicao_m: 0.1           # m/sqrt(s)
+    rumo_rad_s: 0.02         # rad/s/sqrt(Hz) do giroscópio
+    acel_mps2: 0.3
+    vies_giro_rad_s: 0.0002
+    vies_acel_mps2: 0.01
+
+veiculo:
+  # Usado apenas nas colunas *_est (estimativas de throttle/brake/steer).
+  descricao: caminhão do gêmeo digital (vehicle.carlamotors.firetruck)
+  entre_eixos_m: 3.8
+  angulo_max_roda_graus: 35
+  massa_kg: 9000
+  area_frontal_m2: 7.0
+  coef_arrasto: 0.7
+  coef_rolamento: 0.008
+  acel_max_tracao_mps2: 2.0    # aceleração com throttle = 1 (normalização)
+  desacel_max_freio_mps2: 6.0  # desaceleração com brake = 1 (normalização)
+  freio_motor_mps2: 0.4        # desaceleração sem pedal (freio-motor)
+
+manobras:
+  # Mesmo vocabulário do GeradorDadosCaminhao do coleta_carla v7
+  acel_limiar_mps2: 0.5
+  guinada_limiar_dps: 8.0
+  vel_parado_mps: 0.5
+  janela_moda_s: 1.0

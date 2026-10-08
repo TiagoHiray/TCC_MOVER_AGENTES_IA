@@ -1,0 +1,133 @@
+# =============================================================================
+# Camada agêntica: logs em linguagem natural + apontamento de problemas (jerk)
+# Caminhos relativos são resolvidos a partir da raiz do repositório.
+# =============================================================================
+
+entrada:
+  telemetria: data/tratado/telemetria_tratada.csv   # saída da etapa de tratamento
+  taxa_hz: 20
+
+blocos:
+  duracao_s: 10          # o caminhão recebe os dados em blocos de 10 s
+  janela_s: 5            # cada bloco é analisado em janelas de 5 s
+  mesclar_ate_s: 20      # janelas seguidas com o mesmo estado viram uma só entrada, até 20 s
+  # Contexto antes e depois do bloco usado só para delimitar eventos que cruzam a fronteira.
+  # Cada evento pertence ao bloco onde está o seu pico.
+  margem_eventos_s: 2.0
+
+limiares:
+  jerk:
+    coluna: jerk_long
+    atencao_mps3: 2.5
+    critico_mps3: 5.0
+    agrupar_picos_s: 1.0     # picos a menos de 1 s um do outro formam um só evento
+  lombada:
+    coluna: acc_vert
+    acel_vertical_mps2: 1.8  # |acc_vert| acima disto no evento (± margem) -> irregularidade na via
+    margem_s: 0.5
+  rotulo:
+    # Nome do evento pelo sinal do 1º pico e pela aceleração logo depois dele:
+    #   negativo e a_long <= -acel_forte -> frenagem brusca; senão corte brusco de aceleração
+    #   positivo e a_long >= +acel_forte -> arrancada brusca; senão soltura brusca do freio
+    acel_forte_mps2: 1.0
+    janela_apos_s: 0.7
+
+estado:
+  # Estado de uma janela = (manobra predominante, faixa de velocidade, nível, atípica pelo ML).
+  # Janelas seguidas com o mesmo estado são mescladas.
+  faixas_velocidade_kmh: [10, 20, 30]
+  reto_ate_graus: 15             # mudança de rumo abaixo disto = trajeto reto
+  # Só para o texto-modelo (rascunho do Supervisor):
+  curva_minima_graus: 30
+  variacao_vel_relevante_kmh: 5
+  rampa_relevante_pct: 3
+
+especialista_ml:
+  ativo: true
+  modelo: data/modelos/especialista_ml.joblib   # não sobrescreve o modelo_especialista.joblib da POC
+  features: [speed_mps, acc_long, acc_lat, acc_vert, jerk_long, yaw_rate_dps]
+  contaminacao: 0.05         # como na POC: ~5 % dos quadros são tratados como anômalos
+  n_arvores: 200
+  semente: 42
+  # Janela atípica se >= 10 % dos quadros (0,5 s em 5 s) forem anômalos. Nesta volta, as
+  # passagens por lombadas dão 7-19 % por janela e as curvas fechadas, 26-30 %.
+  fracao_atipica: 0.10
+
+supervisor:
+  # Guarda leve: se o texto do LLM citar um número sem respaldo nos fatos, a entrada usa o
+  # texto-modelo e registra o motivo. Não é um segundo agente; pode ser desligada.
+  validar_numeros: true
+  max_palavras_log: 45
+  max_palavras_campo: 20     # diagnóstico e ação
+  orcamento_bloco_s: 8.0     # passado esse tempo de LLM no bloco, o resto usa o texto-modelo
+  falhas_para_desligar: 2    # erros seguidos do LLM até desligá-lo nesta execução
+
+llm:
+  # O .env (MOVER_LLM_PROVEDOR, MOVER_LLM_MODELO, OLLAMA_HOST...) tem prioridade sobre estes valores,
+  # e os argumentos de linha de comando têm prioridade sobre o .env.
+  provedor: ollama           # ollama | openai | gemini | falso
+  temperatura: 0.1
+  timeout_s: 30
+  modelos_padrao:
+    ollama: gemma2:2b
+    openai: gpt-4o-mini
+    gemini: gemini-2.5-flash
+  ollama:
+    host: http://localhost:11434
+    num_ctx: 2048
+
+chat:
+  # Chat da página sobre o log. Usa o mesmo provedor de LLM da sessão (ou o do .env/YAML).
+  # Contexto: o log publicado até o bloco atual + o próximo bloco já analisado (PREVISÃO).
+  max_palavras: 70           # limite pedido ao LLM; com mais que o dobro, a guarda recusa a resposta
+  max_entradas_contexto: 16  # entradas no prompt: todos os problemas, o trecho citado na pergunta e as mais recentes até este total
+  rodadas_historico: 3       # perguntas e respostas anteriores mandadas junto
+  num_ctx: 4096              # janela do Ollama só para o chat (o log não cabe em 2048 tokens)
+  timeout_s: 60
+  # Guarda leve, igual à do Supervisor: resposta com número sem respaldo no log ou citação de
+  # entrada inexistente é trocada pela resposta montada direto do log. Não é um revisor.
+  validar_numeros: true
+
+conhecimento:
+  # Base usada pelo Supervisor no diagnóstico e na ação (e pelo texto-modelo).
+  frenagem_brusca:
+    nome: frenagem brusca
+    consequencia: desgasta freios e pneus, força a transmissão e pode deslocar a carga
+    acao: antecipar a frenagem e dosar o pedal de forma progressiva
+  corte_aceleracao:
+    nome: corte brusco de aceleração
+    consequencia: dá um tranco na transmissão e joga a carga para a frente
+    acao: aliviar o acelerador de forma gradual
+  arrancada_brusca:
+    nome: arrancada brusca
+    consequencia: aumenta o consumo de combustível e o esforço no motor e na transmissão
+    acao: acelerar de forma progressiva
+  soltura_freio:
+    nome: soltura brusca do freio
+    consequencia: dá um tranco na transmissão e na carga
+    acao: soltar o freio gradualmente ao fim da frenagem
+  irregularidade_via:
+    nome: irregularidade na via (provável lombada)
+    consequencia: sobrecarrega a suspensão, os pneus e a carga
+    acao: chegar mais devagar e atravessar a irregularidade sem frear nem acelerar
+
+eventos_sinteticos:
+  # Usados só com --injetar-eventos. As linhas alteradas recebem fonte = sintetico.
+  # Mudam acc_long, jerk_long, acc_x/acc_y, imu_acc_x, comandos estimados e manobra;
+  # a velocidade e a pose continuam as reais (o replay segue a trajetória gravada).
+  - tempo_s: 75
+    tipo: frenagem_brusca
+    intensidade_mps2: 3.5
+    duracao_s: 1.5
+    rampa_s: 0.4
+  - tempo_s: 118
+    tipo: arrancada_brusca
+    intensidade_mps2: 2.0
+    duracao_s: 2.0
+    rampa_s: 0.8
+
+saida:
+  pasta: data/agentes
+  log: log_agentes.jsonl
+  log_com_eventos: log_agentes_com_eventos.jsonl
+  telemetria_com_eventos: telemetria_com_eventos.csv

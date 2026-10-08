@@ -1,0 +1,43 @@
+# Dependências do gêmeo digital MOVER (etapas 1 a 4), separadas do requirements.txt do repositório
+# para não mexer no ambiente da POC e do dashboard dos colegas.
+#
+#   python -m venv .venv && .venv/bin/pip install -r requirements-mover.txt     (Linux/macOS)
+#   python -m venv .venv && .venv\Scripts\pip install -r requirements-mover.txt (Windows)
+#
+# Versões testadas (Python 3.13): numpy 2.5, pandas 3.0, scipy 1.18, scikit-learn 1.9, langgraph 1.2,
+# fastapi 0.142, uvicorn 0.54, httpx 0.28, pillow 12.3, pydantic 2.13, pytest 9.1.
+
+# Etapa 1: tratamento dos dados do Sensor Logger
+numpy>=1.26
+pandas>=2.2
+scipy>=1.11
+matplotlib>=3.8          # figuras de validação (validar.py, verificar_mapa.py)
+pyyaml>=6.0
+
+# Etapa 2: camada agêntica (Especialista + Supervisor)
+langgraph>=0.2
+pydantic>=2.6
+scikit-learn>=1.4        # especialista de ML (IsolationForest)
+joblib>=1.3
+python-dotenv>=1.0       # provedor e modelo do LLM pelo .env
+
+# Provedores de LLM: instale só o que for usar (o padrão é o Ollama com gemma2:2b)
+ollama>=0.3
+# langchain-openai>=0.2  # MOVER_LLM_PROVEDOR=openai (precisa de OPENAI_API_KEY)
+# google-genai>=1.0      # MOVER_LLM_PROVEDOR=gemini (precisa de GOOGLE_API_KEY ou GEMINI_API_KEY)
+
+# Etapas 3 e 4: servidor, replay e interface de 4 painéis
+fastapi>=0.110
+uvicorn[standard]>=0.29  # inclui o suporte a WebSocket
+httpx>=0.27
+pillow>=10.0             # JPEG da câmera do CARLA para o painel 1
+
+# Opcional: confere a projeção do mapa contra o PROJ nos testes
+# pyproj>=3.6
+
+# Testes
+pytest>=8.0
+
+# Cliente do CARLA 0.9.16: num ambiente com Python 3.12, o mesmo do executar.ps1 do Eduardo
+# (venv_carla), com as dependências acima mais:
+#   pip install carla==0.9.16

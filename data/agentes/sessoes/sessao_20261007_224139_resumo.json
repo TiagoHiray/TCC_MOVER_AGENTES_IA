@@ -1,0 +1,21 @@
+{
+  "entradas": 39,
+  "logs": 30,
+  "problemas": 9,
+  "problemas_por_nivel": {
+    "atencao": 6,
+    "critico": 3
+  },
+  "problemas_por_evento": {
+    "soltura_freio": 7,
+    "frenagem_brusca": 1,
+    "arrancada_brusca": 1
+  },
+  "texto_origem": {
+    "llm": 36,
+    "modelo": 3
+  },
+  "blocos_publicados": 16,
+  "maior_espera_s": 0.0,
+  "latencia_media_s": 0.057
+}
