@@ -1,0 +1,62 @@
+{
+  "treinado_em": "2026-10-07T22:33:06-03:00",
+  "origem": "data\\tratado\\telemetria_tratada.csv",
+  "amostras": 3032,
+  "features": [
+    "speed_mps",
+    "acc_long",
+    "acc_lat",
+    "acc_vert",
+    "jerk_long",
+    "yaw_rate_dps"
+  ],
+  "contaminacao": 0.05,
+  "n_arvores": 200,
+  "semente": 42,
+  "versao_sklearn": "1.7.2",
+  "fracao_atipica_no_treino": 0.05013192612137203,
+  "pontuacao_percentis": {
+    "p1": -0.049315975129493726,
+    "p5": -5.228564976811345e-17,
+    "p50": 0.13368206059190216,
+    "p95": 0.18137904980403394
+  },
+  "estatisticas_features": {
+    "speed_mps": {
+      "media": 5.1429728792875995,
+      "desvio": 1.557523441045005,
+      "min": 0.81796,
+      "max": 8.24389
+    },
+    "acc_long": {
+      "media": 0.019984828496042214,
+      "desvio": 0.5549877180532979,
+      "min": -2.1161,
+      "max": 1.69779
+    },
+    "acc_lat": {
+      "media": -0.18464021767810024,
+      "desvio": 0.5458415508800984,
+      "min": -2.46303,
+      "max": 1.41083
+    },
+    "acc_vert": {
+      "media": 0.04946025065963061,
+      "desvio": 0.572271208040873,
+      "min": -3.95456,
+      "max": 4.03777
+    },
+    "jerk_long": {
+      "media": -0.0027385224274406304,
+      "desvio": 0.9600550982167997,
+      "min": -4.20163,
+      "max": 6.59825
+    },
+    "yaw_rate_dps": {
+      "media": -2.383904429419525,
+      "desvio": 5.215333221927273,
+      "min": -23.28407,
+      "max": 5.34053
+    }
+  }
+}

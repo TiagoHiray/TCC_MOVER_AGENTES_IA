@@ -1,7 +1,0 @@
-.env
-venv
-venv/
-.venv
-.forge
-metadata.json
-env_carla

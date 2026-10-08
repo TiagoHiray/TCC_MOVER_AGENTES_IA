@@ -1,0 +1,87 @@
+# =============================================================================
+# Simulação: replay da volta gravada no CARLA 0.9.16 (gêmeo digital)
+# Caminhos relativos são resolvidos a partir da raiz do repositório.
+# =============================================================================
+
+mapa:
+  # Mapa do campus feito pelo Eduardo (pasta mapa_imt_plano_carla do Drive), usado sem alterações.
+  # Outro mapa: python -m mover.simulacao.replay_carla --mapa caminho/do/mapa.xodr
+  arquivo: data/mapas/mapa_final.xodr
+  passo_m: 0.5                     # amostragem dos centros de faixa usada no alinhamento
+  tipos_faixa: [driving, restricted, bidirectional, parking]
+
+telemetria:
+  arquivo: data/tratado/telemetria_tratada.csv   # poses da volta (Etapa 1)
+
+alinhamento:
+  peso_rumo_m: 3.0                 # custo de casar com uma via perpendicular, em metros
+  icp:                             # ajuste rígido fino depois da georreferência
+    ativo: true
+    max_rotacao_graus: 3.0
+    max_translacao_m: 5.0
+    escala_robusta_m: 1.5          # pesos de Cauchy: desvios bem maiores que isto pesam pouco
+    dist_max_par_m: 10.0
+    max_iteracoes: 50
+    subamostragem: 4
+  correcao_borda:                  # puxa para dentro da faixa só o que passar da borda
+    ativa: true
+    margem_m: 0.5                  # o centro do caminhão fica a pelo menos 0,5 m da borda
+    suavizacao_s: 2.0              # a correção entra e sai em ~2 s
+    peso_curvatura: 32             # 1 = só suavidade da correção; 32 = guinada de 2,1 m/s² (em vez de 4,9) aos 54,6 s; máx da volta 2,36 (gravada 2,22)
+    dist_max_m: 15.0               # mais longe que isso de qualquer via: não corrige
+    max_desvio_rumo_graus: 25.0
+  saida:
+    pasta: data/simulacao          # alinhamento.json, poses_carla.csv e alinhamento.png
+
+carla:
+  host: localhost
+  porta: 2000
+  timeout_s: 60
+  passo_s: 0.05                    # 20 Hz, igual ao fixed_delta_seconds do coleta_carla
+  carregar_mapa: true              # gera o mundo OpenDRIVE a partir do .xodr (--manter-mundo desliga)
+  opendrive:                       # mesmos parâmetros do carregar_xodr.py do Eduardo
+    vertex_distance: 2.0
+    max_road_length: 50.0
+    wall_height: 0.0
+    additional_width: 0.6
+    smooth_junctions: true
+    enable_mesh_visibility: true
+    enable_pedestrian_navigation: true
+  clima_da_gravacao: true          # nuvens, chuva e altura do sol do CSV tratado
+
+veiculo:
+  blueprint: vehicle.carlamotors.firetruck   # o mesmo do coleta_carla.py
+  role_name: mover_gemeo
+  altura_extra_m: 0.05             # acima do asfalto; a física fica desligada e a pose é imposta
+
+camera:
+  modo: perseguicao                # perseguicao | cima | livre
+  distancia_m: 16
+  altura_m: 8
+  inclinacao_graus: -20
+  altura_cima_m: 80
+
+camera_painel:
+  # Câmera RGB presa ao caminhão que alimenta o painel 1 da página (MJPEG em /camera.mjpg).
+  # Só existe com o CARLA; sem ela (ou com --sem-camera-painel) a página mostra o mapa 2D.
+  ativa: true
+  largura: 640                     # pixels; maior = mais nítido, porém mais CPU para o JPEG
+  altura: 360
+  fps: 10                          # sensor_tick em tempo de simulação (fator de tempo 2 = ~20 quadros/s)
+  fov: 90
+  distancia_m: 12                  # atrás do centro do caminhão
+  altura_m: 5
+  inclinacao_graus: -15
+  qualidade_jpeg: 70               # 1-95
+
+replay:
+  fator_tempo: 1.0                 # 2 = duas vezes mais rápido que o tempo real
+  estado_a_cada_ticks: 4           # envia a pose ao servidor a 5 Hz
+  marcar_problemas: true           # escreve na pista os problemas do bloco que vai começar
+  vida_marcas_s: 12
+
+servidor:
+  host: 127.0.0.1
+  porta: 8000
+  pasta_sessoes: data/agentes/sessoes
+  timeout_bloco_s: 300             # quanto o replay espera a análise de um bloco

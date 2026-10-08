@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MOVER · gêmeo digital do caminhão</title>
+  <meta name="description" content="Painel do gêmeo digital MOVER: simulação no CARLA, dashboard da telemetria, log da camada agêntica e chat sobre o log.">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111827'/%3E%3Cpath d='M7 21h18v-6l-4-4H7z' fill='%23e5483b'/%3E%3Ccircle cx='11' cy='22' r='2.5' fill='%2338c6dc'/%3E%3Ccircle cx='21' cy='22' r='2.5' fill='%2338c6dc'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/estatico/painel.css">
+  <script>
+    // Erros de JS ficam em <html data-erros="..."> (conferidos com o Chrome headless nos testes visuais).
+    (function () {
+      var erros = [];
+      window.__registrarErro = function (mensagem) {
+        erros.push(String(mensagem));
+        document.documentElement.setAttribute("data-erros", erros.slice(-5).join(" | "));
+      };
+      window.addEventListener("error", function (ev) {
+        var alvo = ev.target && ev.target !== window ? (ev.target.src || ev.target.href || "") : "";
+        if (alvo && /camera\.mjpg/.test(alvo)) return; // a transmissão da câmera cai quando o replay para
+        var onde = ev.filename ? " @" + ev.filename.split("/").pop() + ":" + ev.lineno : "";
+        window.__registrarErro((ev.message || (alvo ? "falha ao carregar " + alvo : "erro")) + onde);
+      }, true);
+      window.addEventListener("unhandledrejection", function (ev) {
+        window.__registrarErro("promessa rejeitada: " + (ev.reason && ev.reason.message ? ev.reason.message : ev.reason));
+      });
+    })();
+  </script>
+  <script type="module" src="/estatico/painel.js"></script>
+</head>
+<body>
+  <header class="topo">
+    <h1 class="marca">MOVER <span>gêmeo digital do caminhão</span></h1>
+    <div class="blocos" aria-label="Blocos de 10 s da volta">
+      <span class="chip" id="chip-bloco">bloco —</span>
+      <div class="progresso" id="progresso" role="img" aria-label="Progresso da volta por bloco"></div>
+    </div>
+    <div class="chips">
+      <span class="chip chip-tempo" id="chip-tempo">— s</span>
+      <span class="chip" id="chip-sessao">sem sessão</span>
+      <span class="chip" id="chip-llm">LLM —</span>
+      <span class="chip chip-sintetico" id="chip-sintetico" hidden title="Volta com a frenagem e a arrancada sintéticas (--injetar-eventos)">eventos sintéticos</span>
+      <span class="chip chip-conexao" id="chip-conexao" data-estado="conectando"><span class="ponto" aria-hidden="true"></span><span class="rotulo">conectando…</span></span>
+    </div>
+  </header>
+
+  <main class="grade">
+    <section class="painel" id="painel-simulacao" data-fonte="mapa" aria-labelledby="titulo-simulacao">
+      <header class="painel-cab">
+        <h2 id="titulo-simulacao">Simulação</h2>
+        <span class="painel-info" id="fonte-simulacao">mapa 2D · sem câmera do CARLA</span>
+      </header>
+      <div class="painel-corpo palco">
+        <canvas id="canvas-perseguicao" class="preencher" aria-label="Visão de cima que segue o caminhão"></canvas>
+        <img id="camera" class="preencher" alt="Câmera de perseguição do caminhão no CARLA" hidden>
+        <div class="hud" id="hud" aria-live="off">
+          <div class="hud-velocidade"><span id="hud-velocidade">—</span><small>km/h</small></div>
+          <div class="hud-manobra" id="hud-manobra"></div>
+          <div class="hud-linha">
+            <span id="hud-aceleracao">— m/s²</span>
+            <span id="hud-tempo">— s</span>
+            <span id="hud-bloco">bloco —</span>
+          </div>
+        </div>
+        <div class="mensagem" id="mensagem-simulacao" hidden>
+          <strong></strong>
+          <code></code>
+        </div>
+        <div class="aviso-proximo" id="aviso-proximo" role="status" hidden>
+          <span class="aviso-quando"></span>
+          <span class="selo-nivel" data-tipo="problema"></span>
+          <span class="aviso-texto"></span>
+          <span class="aviso-previsto" hidden>previsão</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="painel" id="painel-dashboard" aria-labelledby="titulo-dashboard">
+      <header class="painel-cab">
+        <h2 id="titulo-dashboard">Dashboard</h2>
+        <ul class="legenda" aria-label="Legenda">
+          <li><i class="leg-linha"></i>percorrido</li>
+          <li><i class="leg-tracejado"></i>previsão</li>
+          <li><i class="leg-ponto" data-nivel="critico"></i>crítico</li>
+          <li><i class="leg-ponto" data-nivel="atencao"></i>atenção</li>
+          <li><i class="leg-ponto leg-vazado"></i>previsto</li>
+        </ul>
+      </header>
+      <div class="painel-corpo dashboard">
+        <div class="mapa-volta">
+          <canvas id="canvas-mapa" class="preencher" aria-label="Mapa da volta com o caminhão e os problemas"></canvas>
+        </div>
+        <div class="graficos">
+          <div class="grafico"><canvas id="canvas-velocidade" class="preencher" aria-label="Velocidade no tempo"></canvas></div>
+          <div class="grafico"><canvas id="canvas-aceleracao" class="preencher" aria-label="Aceleração longitudinal no tempo"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="painel" id="painel-log" aria-labelledby="titulo-log">
+      <header class="painel-cab">
+        <h2 id="titulo-log">Log da camada agêntica</h2>
+        <span class="painel-info" id="contagem-log"></span>
+      </header>
+      <div class="painel-corpo log">
+        <div class="lista-envoltorio">
+          <ol class="lista-log" id="lista-log" aria-live="polite"></ol>
+          <button class="ir-fim" id="ir-fim-log" type="button" hidden></button>
+        </div>
+        <div class="previsao" id="previsao" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section class="painel" id="painel-chat" aria-labelledby="titulo-chat">
+      <header class="painel-cab">
+        <h2 id="titulo-chat">Chat sobre o log</h2>
+        <span class="painel-info">respostas curtas, com citações</span>
+      </header>
+      <div class="painel-corpo chat">
+        <ol class="conversa" id="conversa" aria-live="polite"></ol>
+        <div class="sugestoes" id="sugestoes" aria-label="Perguntas sugeridas"></div>
+        <form class="form-chat" id="form-chat" autocomplete="off">
+          <label class="so-leitor" for="pergunta">Pergunta sobre o log</label>
+          <input id="pergunta" name="pergunta" type="text" maxlength="500" placeholder="Pergunte sobre o log… (ex.: o que aconteceu entre 40 e 60 s?)">
+          <button id="enviar" type="submit">Enviar</button>
+        </form>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

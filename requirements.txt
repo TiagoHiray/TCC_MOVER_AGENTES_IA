@@ -1,8 +1,0 @@
-langgraph
-langchain-core
-joblib
-scikit-learn 
-langchain_openai
-streamlit
-plotly
-python-dotenv

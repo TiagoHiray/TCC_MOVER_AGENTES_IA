@@ -1,0 +1,128 @@
+{
+  "quadros": 3032,
+  "estados": 758,
+  "blocos": [
+    {
+      "bloco": 0,
+      "espera_s": 0.0,
+      "latencia_s": 0.063,
+      "n_entradas": 2,
+      "n_problemas": 0
+    },
+    {
+      "bloco": 1,
+      "espera_s": 0.0,
+      "latencia_s": 0.062,
+      "n_entradas": 3,
+      "n_problemas": 1
+    },
+    {
+      "bloco": 2,
+      "espera_s": 0.0,
+      "latencia_s": 0.063,
+      "n_entradas": 2,
+      "n_problemas": 0
+    },
+    {
+      "bloco": 3,
+      "espera_s": 0.0,
+      "latencia_s": 0.063,
+      "n_entradas": 3,
+      "n_problemas": 1
+    },
+    {
+      "bloco": 4,
+      "espera_s": 0.0,
+      "latencia_s": 0.063,
+      "n_entradas": 2,
+      "n_problemas": 0
+    },
+    {
+      "bloco": 5,
+      "espera_s": 0.0,
+      "latencia_s": 0.047,
+      "n_entradas": 3,
+      "n_problemas": 1
+    },
+    {
+      "bloco": 6,
+      "espera_s": 0.0,
+      "latencia_s": 0.062,
+      "n_entradas": 2,
+      "n_problemas": 0
+    },
+    {
+      "bloco": 7,
+      "espera_s": 0.0,
+      "latencia_s": 0.047,
+      "n_entradas": 3,
+      "n_problemas": 1
+    },
+    {
+      "bloco": 8,
+      "espera_s": 0.0,
+      "latencia_s": 0.046,
+      "n_entradas": 3,
+      "n_problemas": 1
+    },
+    {
+      "bloco": 9,
+      "espera_s": 0.0,
+      "latencia_s": 0.062,
+      "n_entradas": 2,
+      "n_problemas": 0
+    },
+    {
+      "bloco": 10,
+      "espera_s": 0.0,
+      "latencia_s": 0.047,
+      "n_entradas": 3,
+      "n_problemas": 1
+    },
+    {
+      "bloco": 11,
+      "espera_s": 0.0,
+      "latencia_s": 0.063,
+      "n_entradas": 3,
+      "n_problemas": 1
+    },
+    {
+      "bloco": 12,
+      "espera_s": 0.0,
+      "latencia_s": 0.062,
+      "n_entradas": 3,
+      "n_problemas": 1
+    },
+    {
+      "bloco": 13,
+      "espera_s": 0.0,
+      "latencia_s": 0.078,
+      "n_entradas": 1,
+      "n_problemas": 0
+    },
+    {
+      "bloco": 14,
+      "espera_s": 0.0,
+      "latencia_s": 0.047,
+      "n_entradas": 3,
+      "n_problemas": 1
+    },
+    {
+      "bloco": 15,
+      "espera_s": 0.0,
+      "latencia_s": 0.031,
+      "n_entradas": 1,
+      "n_problemas": 0
+    }
+  ],
+  "interrompido": false,
+  "duracao_real_s": 151.672,
+  "atrasos_relogio": 0,
+  "n_entradas": 39,
+  "n_problemas": 9,
+  "maior_espera_s": 0.0,
+  "sessao": "20261007_224139",
+  "fator_tempo": 1.0,
+  "estados_enviados": 758,
+  "estados_descartados": 0
+}

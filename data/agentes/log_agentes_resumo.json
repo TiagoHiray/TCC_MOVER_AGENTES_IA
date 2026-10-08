@@ -1,0 +1,33 @@
+{
+  "blocos": 16,
+  "entradas": 36,
+  "logs": 29,
+  "logs_continuacao": 4,
+  "logs_mesclados": 2,
+  "problemas": 7,
+  "problemas_por_nivel": {
+    "atencao": 5,
+    "critico": 2
+  },
+  "problemas_por_causa": {
+    "irregularidade_via": 7
+  },
+  "problemas_por_evento": {
+    "soltura_freio": 7
+  },
+  "logs_atipicos_ml": 8,
+  "texto_origem": {
+    "llm": 32,
+    "modelo": 4
+  },
+  "motivos_texto_modelo": {
+    "continuação de trecho estável (sem LLM)": 4
+  },
+  "chamadas_llm": {
+    "chamadas": 32,
+    "aceitas": 32
+  },
+  "latencia_bloco_media_s": 0.046,
+  "latencia_bloco_max_s": 0.079,
+  "duracao_bloco_s": 10.0
+}
