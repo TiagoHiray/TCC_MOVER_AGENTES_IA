@@ -16,9 +16,14 @@ Latitude/longitude saem do inverso do alinhamento da Etapa 3 (data/simulacao/ali
 da referência da Etapa 1, não da geolocalização do CARLA, que não entende o geoReference em UTM do
 mapa do campus. Sem esses arquivos, gnss_lat/gnss_lon ficam vazios.
 
+Com `--rota volta_real` o caminhão sai sempre do mesmo ponto e faz o trajeto da volta gravada no
+campus (rota.py); a semente só sorteia o fator de velocidade. Quem dirige é um controlador próprio,
+porque o TM só anda no sentido das faixas e o mapa foi desenhado no sentido contrário ao da volta.
+
 Uso, a partir da pasta src/, com o CarlaUE4 0.9.16 aberto (Python 3.12 + carla==0.9.16):
     python -m mover.simulacao.voltas_autonomas                           # 50 voltas (config/simulacao.yaml)
     python -m mover.simulacao.voltas_autonomas --voltas 3 --duracao 60   # teste rápido
+    python -m mover.simulacao.voltas_autonomas --rota volta_real --voltas 3
     python -m mover.simulacao.voltas_autonomas --manter-mundo --sem-renderizacao
 """
 
@@ -60,6 +65,9 @@ PADRAO_VOLTAS: dict[str, Any] = {
     "velocidade_kmh": [20.0, 30.0],
     "porta_tm": 8100,
     "max_parado_s": 5.0,
+    "rota": "autopilot",
+    "fator_velocidade": [0.9, 1.1],
+    "max_desvio_rota_m": 8.0,
 }
 
 COLUNAS_BRUTAS = ("t", "x", "y", "z", "yaw", "pitch", "roll", "vx", "vy", "vz", "ax", "ay", "az",
@@ -224,6 +232,7 @@ class ColetorVoltas:
         self.spectator: Any = None
         self.pontos: list[Any] = []
         self.clima: dict[str, float] = {}
+        self.rota: Any = None  # Rota da volta real (rota.py); None = Traffic Manager
         self._config_original: Any = None
 
     def conectar(self) -> None:
@@ -333,38 +342,91 @@ class ColetorVoltas:
             carla.Location(x=loc.x - d * math.cos(r), y=loc.y - d * math.sin(r), z=loc.z + h),
             carla.Rotation(pitch=float(self.ccam.get("inclinacao_graus", -20)), yaw=tf.rotation.yaw)))
 
-    def gravar_volta(self, semente: int, duracao_s: float) -> tuple[pd.DataFrame, dict[str, Any]]:
-        """Uma volta autônoma com a semente dada; devolve as amostras brutas (COLUNAS_BRUTAS) e os metadados."""
-        rng = random.Random(semente)
-        self.tm.set_random_device_seed(int(semente))
-        vel_min, vel_max = (float(v) for v in self.cvol["velocidade_kmh"])
-        vel = round(rng.uniform(vel_min, vel_max), 1)
-        ordem = list(range(len(self.pontos)))
-        rng.shuffle(ordem)
-        bp = self._blueprint()
-        ator, partida = None, None
-        for i in ordem[:20]:
-            ator = self.world.try_spawn_actor(bp, self.pontos[i])
+    def _partida_da_rota(self, bp: Any) -> tuple[Any, dict[str, Any]]:
+        carla = self.carla
+        x, y, yaw = self.rota.pose_inicial()
+        wp = self.mapa.get_waypoint(carla.Location(x=x, y=y, z=0.0), project_to_road=True, lane_type=carla.LaneType.Any)
+        z0 = wp.transform.location.z if wp is not None else 0.0
+        for extra in (0.5, 2.0, 5.0):  # o asfalto às vezes colide com a caixa do caminhão no spawn
+            ator = self.world.try_spawn_actor(bp, carla.Transform(carla.Location(x=x, y=y, z=z0 + extra),
+                                                                  carla.Rotation(yaw=yaw)))
             if ator is not None:
-                partida = i
-                break
-        if ator is None:
-            raise RuntimeError("nenhum ponto de partida livre para o caminhão")
+                return ator, {"rota": "volta_real", "x": round(x, 2), "y": round(y, 2), "z": round(z0 + extra, 2),
+                              "yaw": round(yaw, 2)}
+        raise RuntimeError("não foi possível criar o caminhão no início da rota da volta real (local ocupado?)")
+
+    def _seguidor(self, ator: Any, fator: float) -> Any:
+        from mover.simulacao.rota import SeguidorDeRota
+
+        entre_eixos, angulo_max = 4.0, 35.0
+        try:  # geometria do próprio blueprint: rodas em cm, no referencial do mundo
+            rodas = ator.get_physics_control().wheels
+            frente, tras = rodas[0].position, rodas[2].position
+            entre_eixos = math.dist((frente.x, frente.y, frente.z), (tras.x, tras.y, tras.z)) / 100.0
+            angulo_max = float(rodas[0].max_steer_angle)
+        except (AttributeError, IndexError, RuntimeError):
+            pass
+        return SeguidorDeRota(self.rota, fator, entre_eixos, angulo_max,
+                              max_desvio_m=float(self.cvol["max_desvio_rota_m"]))
+
+    def gravar_volta(self, semente: int, duracao_s: float) -> tuple[pd.DataFrame, dict[str, Any]]:
+        """Uma volta autônoma com a semente dada; devolve as amostras brutas (COLUNAS_BRUTAS) e os metadados.
+
+        Sem rota, o Traffic Manager dirige a partir de um ponto sorteado. Com a rota da volta real, o
+        caminhão sai sempre do mesmo ponto e o SeguidorDeRota dirige; a semente sorteia só o fator de velocidade.
+        """
+        rng = random.Random(semente)
+        bp = self._blueprint()
+        seguidor, fator, partida = None, None, None
+        if self.rota is not None:
+            fator = round(rng.uniform(*(float(v) for v in self.cvol["fator_velocidade"])), 3)
+            ator, info_partida = self._partida_da_rota(bp)
+            vel = round(float(np.mean(self.rota.v)) * fator * 3.6, 1)
+        else:
+            self.tm.set_random_device_seed(int(semente))
+            vel_min, vel_max = (float(v) for v in self.cvol["velocidade_kmh"])
+            vel = round(rng.uniform(vel_min, vel_max), 1)
+            ordem = list(range(len(self.pontos)))
+            rng.shuffle(ordem)
+            ator = None
+            for i in ordem[:20]:
+                ator = self.world.try_spawn_actor(bp, self.pontos[i])
+                if ator is not None:
+                    partida = i
+                    break
+            if ator is None:
+                raise RuntimeError("nenhum ponto de partida livre para o caminhão")
+            p = self.pontos[partida]
+            info_partida = {"indice": partida, "x": round(p.location.x, 2), "y": round(p.location.y, 2),
+                            "z": round(p.location.z, 2), "yaw": round(p.rotation.yaw, 2)}
         sensores, contagem = self._sensores(ator)
         linhas: list[tuple] = []
         motivo, parado = "duracao", 0
         try:
             for _ in range(int(round(float(self.cvol["aquecimento_s"]) / self.passo_s))):
                 self.world.tick()  # o caminhão nasce um pouco acima do asfalto e assenta antes de partir
-            ator.set_autopilot(True, self.porta_tm)
-            self.tm.ignore_lights_percentage(ator, 100.0)
-            self.tm.ignore_signs_percentage(ator, 100.0)
-            self.tm.auto_lane_change(ator, False)
-            self.tm.random_left_lanechange_percentage(ator, 0.0)
-            self.tm.random_right_lanechange_percentage(ator, 0.0)
-            self.tm.set_desired_speed(ator, vel)
+            if self.rota is not None:
+                seguidor = self._seguidor(ator, fator)
+            else:
+                ator.set_autopilot(True, self.porta_tm)
+                self.tm.ignore_lights_percentage(ator, 100.0)
+                self.tm.ignore_signs_percentage(ator, 100.0)
+                self.tm.auto_lane_change(ator, False)
+                self.tm.random_left_lanechange_percentage(ator, 0.0)
+                self.tm.random_right_lanechange_percentage(ator, 0.0)
+                self.tm.set_desired_speed(ator, vel)
             max_parado = int(round(float(self.cvol["max_parado_s"]) / self.passo_s))
+            estado = self.world.get_snapshot().find(ator.id)
             for _ in range(int(round(duracao_s / self.passo_s))):
+                if seguidor is not None and estado is not None:
+                    tf, vel3 = estado.get_transform(), estado.get_velocity()
+                    rapidez = vel3.x * math.cos(math.radians(tf.rotation.yaw)) + vel3.y * math.sin(math.radians(tf.rotation.yaw))
+                    acelerador, volante, freio = seguidor.comando(tf.location.x, tf.location.y, tf.rotation.yaw,
+                                                                  rapidez, self.passo_s)
+                    if seguidor.fim:
+                        motivo = seguidor.fim
+                        break
+                    ator.apply_control(self.carla.VehicleControl(throttle=acelerador, steer=volante, brake=freio))
                 self.world.tick()
                 snap = self.world.get_snapshot()
                 estado = snap.find(ator.id)
@@ -388,12 +450,12 @@ class ColetorVoltas:
                     break
         finally:
             self._remover(ator, sensores)
-        p = self.pontos[partida]
         meta = {"semente": int(semente), "velocidade_desejada_kmh": vel, "encerrada_por": motivo,
-                "partida": {"indice": partida, "x": round(p.location.x, 2), "y": round(p.location.y, 2),
-                            "z": round(p.location.z, 2), "yaw": round(p.rotation.yaw, 2)},
-                "colisoes": contagem["colisoes"], "invasoes_faixa": contagem["invasoes"],
+                "partida": info_partida, "colisoes": contagem["colisoes"], "invasoes_faixa": contagem["invasoes"],
                 "passo_s": self.passo_s, "porta_tm": self.porta_tm}
+        if seguidor is not None:
+            meta.update(rota="volta_real", fator_velocidade=fator, comprimento_rota_m=round(self.rota.comprimento_m, 1),
+                        percorrido_rota_m=round(float(self.rota.s[seguidor.i]), 1))
         return pd.DataFrame(linhas, columns=list(COLUNAS_BRUTAS)), meta
 
     def _remover(self, ator: Any, sensores: list[Any]) -> None:
@@ -405,7 +467,8 @@ class ColetorVoltas:
                 pass
         if ator.is_alive:
             try:
-                ator.set_autopilot(False, self.porta_tm)
+                if self.rota is None:
+                    ator.set_autopilot(False, self.porta_tm)
                 ator.destroy()
             except RuntimeError:
                 pass
@@ -464,6 +527,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-parado", type=float,
                         help="segundos parado que encerram a volta e passam para a próxima; 0 = nunca (padrão: YAML)")
     parser.add_argument("--pasta", help="pasta das voltas (padrão: YAML)")
+    parser.add_argument("--rota", choices=("autopilot", "volta_real"),
+                        help="autopilot (TM, partida sorteada) ou volta_real (trajeto da volta gravada) (padrão: YAML)")
     parser.add_argument("--manter-mundo", action="store_true", help="não gera o mundo OpenDRIVE; usa o que está aberto")
     parser.add_argument("--sem-renderizacao", action="store_true", help="no_rendering_mode: mais rápido, sem imagem")
     parser.add_argument("--sem-camera", action="store_true", help="não leva a câmera do simulador atrás do caminhão")
@@ -475,16 +540,29 @@ def main(argv: list[str] | None = None) -> int:
     cfg = carregar_yaml(args.config)
     if args.max_parado is not None:
         cfg["voltas"] = {**(cfg.get("voltas") or {}), "max_parado_s": args.max_parado}
+    if args.rota is not None:
+        cfg["voltas"] = {**(cfg.get("voltas") or {}), "rota": args.rota}
     cvol = cfg_voltas(cfg)
+    rota = None
+    if cvol["rota"] == "volta_real":
+        from mover.simulacao.rota import rota_da_volta_real
+
+        rota = rota_da_volta_real(cfg)
+        log.info("Rota da volta real: %.0f m, %.0f s gravados; partida fixa em (%.1f, %.1f).",
+                 rota.comprimento_m, rota.duracao_s, rota.x[0], rota.y[0])
+    elif cvol["rota"] != "autopilot":
+        raise SystemExit(f"voltas.rota desconhecida: {cvol['rota']!r} (use autopilot ou volta_real)")
     quantidade = int(args.voltas if args.voltas is not None else cvol["quantidade"])
     semente0 = int(args.semente if args.semente is not None else cvol["semente_inicial"])
-    duracao = float(args.duracao or cvol["duracao_s"])
+    # na rota fixa a volta termina no fim do trajeto; a duração do YAML vira só um teto folgado
+    duracao = float(args.duracao or (max(float(cvol["duracao_s"]), 2.0 * rota.duracao_s) if rota else cvol["duracao_s"]))
     pasta = caminho(args.pasta or cvol["pasta"])
     cfg_trat = carregar_yaml(args.config_tratamento)
     limiares = carregar_yaml(args.config_agentes).get("limiares")
     geo = GeoDoMapa.carregar(cfg)
 
     coletor = ColetorVoltas(cfg, args.manter_mundo, args.sem_renderizacao, seguir_camera=not args.sem_camera)
+    coletor.rota = rota
     texto_xodr, nome_mapa = None, "mundo já aberto no CARLA"
     if not coletor.manter_mundo:
         arquivo = caminho(args.mapa or cfg["mapa"]["arquivo"])
