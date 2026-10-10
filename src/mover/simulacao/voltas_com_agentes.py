@@ -266,6 +266,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manter-mundo", action="store_true", help="não gera o mundo OpenDRIVE; usa o que está aberto")
     parser.add_argument("--camera", choices=("perseguicao", "cima", "livre"), help="câmera do simulador (padrão: YAML)")
     parser.add_argument("--sem-camera-painel", action="store_true", help="sem a câmera RGB do painel 1")
+    parser.add_argument("--sem-renderizacao", action="store_true",
+                        help="no_rendering_mode: mais rápido, sem imagem (a página mostra o mapa 2D)")
     parser.add_argument("--servidor", help="URL do servidor da camada agêntica (padrão: host/porta do YAML)")
     parser.add_argument("--iniciar-servidor", action="store_true", help="sobe o servidor da camada agêntica neste processo")
     parser.add_argument("--manter-servidor", action="store_true", help="com --iniciar-servidor: página no ar até o Ctrl+C")
@@ -304,7 +306,8 @@ def main(argv: list[str] | None = None) -> int:
     elif not (args.sem_carla or args.manter_mundo):
         raise SystemExit(f"Mapa não encontrado: {arquivo_mapa}")
 
-    mundo: Mundo = MundoFalso() if args.sem_carla else MundoCarla(cfg, args.camera, args.manter_mundo)
+    mundo: Mundo = MundoFalso() if args.sem_carla else MundoCarla(cfg, args.camera, args.manter_mundo,
+                                                                  args.sem_renderizacao)
     servidor = thread = None
     cliente: ClienteAgentes | None = None
     url: str | None = None

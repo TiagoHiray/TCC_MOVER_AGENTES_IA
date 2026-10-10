@@ -353,7 +353,8 @@ class MundoFalso:
 class MundoCarla:
     """Lado CARLA do replay: mundo OpenDRIVE, caminhão sem física, câmeras, marcas e clima."""
 
-    def __init__(self, cfg: dict[str, Any], camera: str | None = None, manter_mundo: bool = False):
+    def __init__(self, cfg: dict[str, Any], camera: str | None = None, manter_mundo: bool = False,
+                 sem_renderizacao: bool = False):
         self.cc = cfg.get("carla", {})
         self.cv = cfg.get("veiculo", {})
         self.ccam = dict(cfg.get("camera", {}))
@@ -362,6 +363,7 @@ class MundoCarla:
         self.ccam_painel = {**PADRAO_CAMERA_PAINEL, **(cfg.get("camera_painel") or {})}
         self.vida_marcas_s = float(cfg.get("replay", {}).get("vida_marcas_s", 12.0))
         self.manter_mundo = manter_mundo or not self.cc.get("carregar_mapa", True)
+        self.sem_renderizacao = sem_renderizacao
         self.carla: Any = None
         self.client: Any = None
         self.world: Any = None
@@ -415,6 +417,8 @@ class MundoCarla:
         config = self.world.get_settings()
         config.synchronous_mode = True
         config.fixed_delta_seconds = float(self.cc.get("passo_s", 0.05))
+        if self.sem_renderizacao:
+            config.no_rendering_mode = True
         self.world.apply_settings(config)
         self.mapa = self.world.get_map()
         self._alturas(trajeto)
@@ -431,7 +435,7 @@ class MundoCarla:
         self._enviar_quadro = enviar
 
     def _criar_camera_painel(self) -> None:
-        if self._enviar_quadro is None or not self.ccam_painel.get("ativa", True):
+        if self._enviar_quadro is None or self.sem_renderizacao or not self.ccam_painel.get("ativa", True):
             return
         painel = CameraPainel(self.ccam_painel, self._enviar_quadro)
         try:
