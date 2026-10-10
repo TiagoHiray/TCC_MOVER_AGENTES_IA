@@ -59,7 +59,7 @@ PADRAO_VOLTAS: dict[str, Any] = {
     "aquecimento_s": 1.0,
     "velocidade_kmh": [20.0, 30.0],
     "porta_tm": 8100,
-    "max_parado_s": 30.0,
+    "max_parado_s": 5.0,
 }
 
 COLUNAS_BRUTAS = ("t", "x", "y", "z", "yaw", "pitch", "roll", "vx", "vy", "vz", "ax", "ay", "az",
@@ -383,7 +383,7 @@ class ColetorVoltas:
                 ))
                 self._seguir(tf)
                 parado = parado + 1 if math.hypot(vel3.x, vel3.y) < 0.1 else 0
-                if parado >= max_parado:
+                if max_parado > 0 and parado >= max_parado:
                     motivo = "parado"
                     break
         finally:
@@ -461,6 +461,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--voltas", type=int, help="quantas voltas gravar (padrão: YAML)")
     parser.add_argument("--semente", type=int, help="semente da 1ª tentativa; as seguintes somam 1 (padrão: YAML)")
     parser.add_argument("--duracao", type=float, help="segundos por volta (padrão: YAML)")
+    parser.add_argument("--max-parado", type=float,
+                        help="segundos parado que encerram a volta e passam para a próxima; 0 = nunca (padrão: YAML)")
     parser.add_argument("--pasta", help="pasta das voltas (padrão: YAML)")
     parser.add_argument("--manter-mundo", action="store_true", help="não gera o mundo OpenDRIVE; usa o que está aberto")
     parser.add_argument("--sem-renderizacao", action="store_true", help="no_rendering_mode: mais rápido, sem imagem")
@@ -471,6 +473,8 @@ def main(argv: list[str] | None = None) -> int:
 
     configurar_logs()
     cfg = carregar_yaml(args.config)
+    if args.max_parado is not None:
+        cfg["voltas"] = {**(cfg.get("voltas") or {}), "max_parado_s": args.max_parado}
     cvol = cfg_voltas(cfg)
     quantidade = int(args.voltas if args.voltas is not None else cvol["quantidade"])
     semente0 = int(args.semente if args.semente is not None else cvol["semente_inicial"])
