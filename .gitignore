@@ -14,3 +14,4 @@ __pycache__/
 # Saidas de execucao (dados de GPS brutos e simulacoes locais)
 runs/
 data/ingestao/
+data/gemeo/

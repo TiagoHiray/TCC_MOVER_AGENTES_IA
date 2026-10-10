@@ -12,6 +12,7 @@ Rotas da camada agêntica:
 
 Rotas da interface (página, câmera do CARLA, cena 2D e chat): ver mover/interface/rotas.py.
 Rotas da ingestão ao vivo do Sensor Logger (/ingestao/...): ver mover/ingestao/rotas.py.
+Rota do gêmeo ao vivo (/gemeo/estado): ver mover/gemeo/servico.py.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from pydantic import BaseModel, ConfigDict
 
 from mover.agentes.supervisor import Supervisor
 from mover.config import caminho, carregar_yaml
+from mover.gemeo.servico import instalar_gemeo
 from mover.ingestao.rotas import instalar_ingestao
 from mover.interface.rotas import instalar_interface
 from mover.servidor.sessao import (BlocoForaDeOrdem, BlocoInvalido, Difusor, OpcoesSessao, SessaoAgentes, SessaoEncerrada,
@@ -78,7 +80,7 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
     app.state.difusor = difusor
     app.state.estado = estado
     instalar_interface(app, estado, cfg_agentes, cfg_simulacao, fabrica_llm_chat)
-    instalar_ingestao(app, cfg_simulacao)
+    instalar_gemeo(app, cfg_simulacao, instalar_ingestao(app, cfg_simulacao))
 
     def sessao_atual() -> SessaoAgentes:
         sessao = estado["sessao"]
