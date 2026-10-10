@@ -85,3 +85,8 @@ servidor:
   porta: 8000
   pasta_sessoes: data/agentes/sessoes
   timeout_bloco_s: 300             # quanto o replay espera a análise de um bloco
+
+# HTTP Push do Sensor Logger (POST /ingestao/sensorlogger). Token opcional: MOVER_INGESTAO_TOKEN no .env
+ingestao:
+  pasta: data/ingestao             # uma subpasta por gravação: raw.jsonl + um CSV por sensor
+  max_corpo_bytes: 5000000
