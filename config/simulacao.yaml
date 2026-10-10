@@ -98,6 +98,11 @@ voltas:
   velocidade_kmh: [20, 30]         # velocidade desejada do Traffic Manager, sorteada por volta
   porta_tm: 8100                   # porta do Traffic Manager (a 8000 é a do servidor da página)
   max_parado_s: 30                 # parado (< 0,1 m/s) por mais que isso: encerra a volta e passa à próxima; 0 = nunca
+  # autopilot: Traffic Manager com partida sorteada. volta_real: sempre o trajeto e a partida da volta
+  # gravada no campus, dirigido por um controlador próprio (o TM só anda no sentido das faixas do mapa)
+  rota: autopilot
+  fator_velocidade: [0.9, 1.1]     # volta_real: velocidade da volta gravada x este fator, sorteado por volta
+  max_desvio_rota_m: 8.0           # volta_real: mais longe que isso do trajeto encerra a volta
   consulta_previsao_s: 0.5         # Fase Y: de quanto em quanto o caminhão pergunta pelos ajustes do próximo bloco
   rampa_replanejamento_s: 1.5      # Fase Y: ajuste que chega com a zona já começada entra nesta rampa
 

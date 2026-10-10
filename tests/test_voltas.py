@@ -39,6 +39,7 @@ from mover.simulacao import voltas_autonomas
 from mover.simulacao.opendrive import ler_xodr
 from mover.simulacao.plano_velocidade import PlanoVelocidade, perfil_ajustado, suavizar_abaixo
 from mover.simulacao.replay_carla import ClienteAgentes, MundoCarla, MundoFalso
+from mover.simulacao.rota import Rota, SeguidorDeRota, montar_rota, rota_da_volta_real
 from mover.simulacao.voltas_autonomas import ColetorVoltas, salvar_volta, telemetria_carla
 from mover.simulacao.voltas_com_agentes import (comparar, poses_no_mapa, rodar_volta_y, telemetria_executada,
                                                 trajeto_da_volta)
@@ -172,6 +173,16 @@ def test_telemetria_do_carla_sai_no_formato_da_etapa_1(cfg_trat):
     assert not tel["jerk_long"].isna().any() and tel["cmd_target_speed_kmh"].iloc[0] == 28.8
 
 
+def andar(veiculo: Any, acelerador: float, volante: float, freio: float, dt: float,
+          entre_eixos_m: float = 4.0, angulo_max_graus: float = 35.0) -> None:
+    """Bicicleta cinemática: 3 m/s² de acelerador cheio, 6 m/s² de freio, arrasto proporcional à velocidade."""
+    veiculo.v = max(0.0, veiculo.v + (3.0 * acelerador - 6.0 * freio - 0.05 * veiculo.v) * dt)
+    r = math.radians(veiculo.yaw)
+    veiculo.x += veiculo.v * math.cos(r) * dt
+    veiculo.y += veiculo.v * math.sin(r) * dt
+    veiculo.yaw += math.degrees(veiculo.v / entre_eixos_m * math.tan(math.radians(volante * angulo_max_graus))) * dt
+
+
 def carla_da_coleta() -> types.ModuleType:
     """O mínimo da API do CARLA 0.9.16 usada pela coleta: mundo síncrono, Traffic Manager e sensores."""
     mod = types.ModuleType("carla")
@@ -218,10 +229,21 @@ def carla_da_coleta() -> types.ModuleType:
     class Controle:
         throttle, brake, steer, gear = 0.4, 0.0, 0.0, 1
 
+    class LaneType:
+        Any, Driving = "any", "driving"
+
+    class VehicleControl:
+        def __init__(self, throttle=0.0, steer=0.0, brake=0.0):
+            self.throttle, self.steer, self.brake = throttle, steer, brake
+
     class Veiculo:
         def __init__(self, ident, transform):
             self.id, self.attributes, self.is_alive = ident, {"role_name": "mover_autonomo"}, True
             self.x, self.v, self.autopilot = transform.location.x, 0.0, False
+            self.y, self.yaw, self.controle = transform.location.y, transform.rotation.yaw, None
+
+        def apply_control(self, controle):
+            self.controle = controle
 
         def set_autopilot(self, ligado, porta):
             chamadas.append(("autopilot", ligado, porta))
@@ -268,10 +290,11 @@ def carla_da_coleta() -> types.ModuleType:
             self.veiculo = veiculo
 
         def get_transform(self):
-            return Transform(Location(self.veiculo.x, 0.0, 0.0))
+            return Transform(Location(self.veiculo.x, self.veiculo.y, 0.0), Rotation(yaw=self.veiculo.yaw))
 
         def get_velocity(self):
-            return Vector3D(self.veiculo.v, 0.0, 0.0)
+            r = math.radians(self.veiculo.yaw)
+            return Vector3D(self.veiculo.v * math.cos(r), self.veiculo.v * math.sin(r), 0.0)
 
         def get_acceleration(self):
             return Vector3D()
@@ -343,6 +366,8 @@ def carla_da_coleta() -> types.ModuleType:
                 if veiculo.is_alive and veiculo.autopilot:
                     veiculo.v = min(mod.tm.desejada[veiculo.id] / 3.6, veiculo.v + 2.0 * dt)
                     veiculo.x += veiculo.v * dt
+                elif veiculo.is_alive and veiculo.controle is not None:
+                    andar(veiculo, veiculo.controle.throttle, veiculo.controle.steer, veiculo.controle.brake, dt)
             return int(round(self.tempo / dt))
 
     class TrafficManager:
@@ -475,6 +500,69 @@ def test_caminhao_parado_encerra_a_volta_so_depois_do_limite_configurado(monkeyp
     tabela, meta = coletor.gravar_volta(3, 5.0)
     coletor.encerrar()
     assert meta["encerrada_por"] == motivo and len(tabela) == amostras
+
+
+def rota_em_u() -> Rota:
+    """Reta de 40 m, meia-volta à esquerda com 15 m de raio e reta de volta: o sentido importa."""
+    reta = np.arange(0.0, 40.0, 0.5)
+    ang = np.linspace(-math.pi / 2, math.pi / 2, 95)[1:-1]
+    x = np.concatenate([reta, 40.0 + 15.0 * np.cos(ang), reta[::-1]])
+    y = np.concatenate([np.zeros(reta.size), 15.0 + 15.0 * np.sin(ang), np.full(reta.size, 30.0)])
+    return montar_rota(x, y, np.full(x.size, 6.0), duracao_s=25.0)
+
+
+def test_seguidor_faz_o_trajeto_da_rota_e_para_no_fim():
+    rota = rota_em_u()
+    assert rota.comprimento_m == pytest.approx(80.0 + math.pi * 15.0, rel=0.02)
+    assert rota.pose_inicial() == pytest.approx((0.0, 0.0, 0.0), abs=1e-6)
+    veiculo = types.SimpleNamespace(x=0.0, y=0.0, yaw=0.0, v=0.0)
+    seguidor = SeguidorDeRota(rota, fator_velocidade=1.0, entre_eixos_m=4.0, angulo_max_roda_graus=35.0)
+    desvio, passos = 0.0, 0
+    while seguidor.fim is None and passos < 2000:
+        acelerador, volante, freio = seguidor.comando(veiculo.x, veiculo.y, veiculo.yaw, veiculo.v, 0.05)
+        andar(veiculo, acelerador, volante, freio, 0.05)
+        desvio = max(desvio, float(np.min(np.hypot(rota.x - veiculo.x, rota.y - veiculo.y))))
+        passos += 1
+    assert seguidor.fim == "fim da rota" and desvio < 1.0
+    assert veiculo.y == pytest.approx(30.0, abs=1.0) and veiculo.x < 5.0  # voltou pela reta de cima
+
+    longe = SeguidorDeRota(rota, 1.0, 4.0, 35.0, max_desvio_m=5.0)
+    longe.comando(0.0, 20.0, 0.0, 0.0, 0.05)
+    assert longe.fim == "fora da rota"
+
+
+def test_montar_rota_tira_as_paradas_e_garante_velocidade_minima():
+    x = np.concatenate([np.zeros(20), np.arange(0.0, 50.0, 0.5)])
+    rota = montar_rota(x, np.zeros(x.size), np.concatenate([np.zeros(20), np.full(100, 5.0)]), duracao_s=12.0)
+    assert np.all(np.diff(rota.s) > 0) and rota.v.min() > 0.0 and rota.x[0] == 0.0
+
+
+def test_rota_da_volta_real_sai_do_inicio_da_volta_gravada():
+    if not Path("data/tratado/telemetria_tratada.csv").exists():
+        pytest.skip("sem a telemetria tratada da volta real")
+    rota = rota_da_volta_real(carregar_yaml("config/simulacao.yaml"))
+    assert rota.comprimento_m > 300.0 and rota.duracao_s > 60.0 and np.all(np.diff(rota.s) > 0)
+
+
+def test_coleta_na_rota_da_volta_real_sai_sempre_do_mesmo_ponto(monkeypatch):
+    carla = carla_da_coleta()
+    monkeypatch.setitem(sys.modules, "carla", carla)
+    coletor = ColetorVoltas(carregar_yaml("config/simulacao.yaml"), seguir_camera=False)
+    coletor.conectar()
+    coletor.preparar_mundo("<OpenDRIVE/>")
+    coletor.rota = rota_em_u()
+    metas = []
+    for semente in (1, 2):
+        tabela, meta = coletor.gravar_volta(semente, 120.0)
+        metas.append(meta)
+        assert meta["encerrada_por"] == "fim da rota" and meta["rota"] == "volta_real"
+        assert 0.9 <= meta["fator_velocidade"] <= 1.1
+        assert meta["percorrido_rota_m"] > 0.95 * meta["comprimento_rota_m"]
+        assert tabela["y"].max() == pytest.approx(30.0, abs=1.5)
+    coletor.encerrar()
+    assert metas[0]["partida"]["x"] == metas[1]["partida"]["x"] == 0.0
+    assert metas[0]["fator_velocidade"] != metas[1]["fator_velocidade"]
+    assert not any(c[0] == "autopilot" for c in carla.chamadas)  # o TM não dirige nesse modo
 
 
 # ---------------------------------------------------------------------------------------------

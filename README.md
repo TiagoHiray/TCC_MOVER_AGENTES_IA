@@ -112,6 +112,11 @@ python -m mover.simulacao.voltas_com_agentes --iniciar-servidor        # todas a
   tempo a mais de volta). `data/voltas/` fica fora do git.
 - Opções da Fase X: `--semente`, `--pasta`, `--manter-mundo`, `--sem-renderizacao` (mais rápido),
   `--sem-camera`, `--max-parado` (segundos parado que encerram a volta e passam à próxima; 0 = nunca). O Traffic Manager usa a porta 8100 (a 8000 é a da página).
+- `--rota volta_real` (ou `voltas.rota: volta_real` no YAML): o caminhão sai sempre do mesmo ponto e faz o trajeto da volta
+  gravada no campus (poses alinhadas ao mapa), com a velocidade da volta real vezes um fator sorteado por volta
+  (`fator_velocidade`). Quem dirige é um controlador próprio (pure pursuit + PI, `simulacao/rota.py`), porque o Traffic
+  Manager só anda no sentido das faixas e o mapa foi desenhado no sentido contrário ao da volta. A volta termina no fim do
+  trajeto (`fim da rota`) ou se o caminhão se afastar mais de `max_desvio_rota_m` (`fora da rota`).
 - Opções da Fase Y: as mesmas do replay (`--provedor`, `--fator-tempo`, `--sem-espera`, `--camera`,
   `--sem-camera-painel`, `--sem-ml`, `--injetar-eventos`), mais `--volta`, `--quantidade` e
   `--sem-renderizacao` (sem imagem; a página mostra o mapa 2D).
@@ -275,7 +280,7 @@ python -m mover.simulacao.benchmark_tempo_real --horizonte 10 --repeticoes 5
 ## Testes
 
 ```bash
-python -m pytest tests -q     # a partir da raiz do projeto: 62 testes (um só roda com o pyproj), sem CARLA, sem LLM e sem navegador
+python -m pytest tests -q     # a partir da raiz do projeto: 66 testes (um só roda com o pyproj), sem CARLA, sem LLM e sem navegador
 ```
 
 ## Limitações conhecidas
