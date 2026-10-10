@@ -2,9 +2,11 @@
 
 Rotas da camada agêntica:
     GET    /saude                 -> {"ok": true, "sessao": {...} | null}
-    POST   /sessao                -> cria a sessão e analisa o bloco 0 (corpo: injetar_eventos, provedor, modelo, sem_ml)
+    POST   /sessao                -> cria a sessão e analisa o bloco 0 (corpo: injetar_eventos, provedor, modelo, sem_ml,
+                                     volta = pasta de uma volta da Fase X em data/voltas/)
     GET    /sessao                -> dados da sessão atual
     POST   /sessao/blocos/{k}     -> o caminhão entrou no bloco k: espera a análise, publica e libera o k+1 (409 fora de ordem)
+    GET    /sessao/previsao       -> próximo bloco já analisado (entradas e ajustes) ou null; o caminhão Y consulta aqui
     POST   /sessao/estado         -> pose do caminhão (sim_time, x, y, yaw...); vira mensagem "estado" com a telemetria
     GET    /sessao/log?desde=N    -> entradas publicadas a partir da N-ésima
     DELETE /sessao                -> encerra a sessão e devolve o resumo
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
@@ -26,7 +29,7 @@ from typing import Any, Callable
 import pandas as pd
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from mover.agentes.supervisor import Supervisor
 from mover.config import caminho, carregar_yaml
@@ -35,8 +38,11 @@ from mover.ingestao.rotas import instalar_ingestao
 from mover.interface.rotas import instalar_interface
 from mover.servidor.sessao import (BlocoForaDeOrdem, BlocoInvalido, Difusor, OpcoesSessao, SessaoAgentes, SessaoEncerrada,
                                    para_json)
+from mover.simulacao.voltas_autonomas import ARQUIVO_TELEMETRIA, cfg_voltas
 
 log = logging.getLogger("mover.servidor")
+
+NOME_VOLTA = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,79}")
 
 
 class OpcoesSessaoModelo(BaseModel):
@@ -46,6 +52,7 @@ class OpcoesSessaoModelo(BaseModel):
     sem_ml: bool = False
     fator_tempo: float = 1.0
     tempo_real: bool = True
+    volta: str | None = Field(default=None, max_length=80)
 
 
 class EstadoModelo(BaseModel):
@@ -53,6 +60,17 @@ class EstadoModelo(BaseModel):
 
     model_config = ConfigDict(extra="allow")
     sim_time: float
+
+
+def arquivo_da_volta(pasta_voltas: Path, nome: str) -> Path:
+    """Telemetria de uma volta da Fase X; só aceita um nome simples de pasta dentro de `pasta_voltas`."""
+    if not NOME_VOLTA.fullmatch(nome):
+        raise HTTPException(400, "nome de volta inválido")
+    raiz = pasta_voltas.resolve()
+    arquivo = (raiz / nome / ARQUIVO_TELEMETRIA).resolve()
+    if not arquivo.is_relative_to(raiz) or not arquivo.is_file():
+        raise HTTPException(404, f"volta {nome} não encontrada")
+    return arquivo
 
 
 def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str, Any] | None = None,
@@ -63,6 +81,7 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
     cfg_agentes = cfg_agentes or carregar_yaml("config/agentes.yaml")
     cfg_simulacao = cfg_simulacao or (carregar_yaml("config/simulacao.yaml") if caminho("config/simulacao.yaml").exists() else {})
     pasta_sessoes = caminho(cfg_simulacao.get("servidor", {}).get("pasta_sessoes", "data/agentes/sessoes"))
+    pasta_voltas = caminho(cfg_voltas(cfg_simulacao)["pasta"])
     difusor = Difusor()
     estado: dict[str, SessaoAgentes | None] = {"sessao": None}
     trava_sessao = asyncio.Lock()
@@ -95,6 +114,7 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
 
     @app.post("/sessao")
     async def criar_sessao(opcoes: OpcoesSessaoModelo) -> dict[str, Any]:
+        arquivo_volta = arquivo_da_volta(pasta_voltas, opcoes.volta) if opcoes.volta else None
         async with trava_sessao:
             anterior = estado["sessao"]
             if anterior is not None and not anterior.encerrada:
@@ -104,7 +124,10 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
 
             def montar() -> SessaoAgentes:
                 supervisor = fabrica_supervisor(op) if fabrica_supervisor else None
-                sessao = SessaoAgentes(cfg_agentes, op, difusor, pasta_sessoes, telemetria=telemetria,
+                # a sessão de uma volta da Fase X lê e grava o log na pasta da própria volta
+                dados = pd.read_csv(arquivo_volta) if arquivo_volta else telemetria
+                pasta = arquivo_volta.parent if arquivo_volta else pasta_sessoes
+                sessao = SessaoAgentes(cfg_agentes, op, difusor, pasta, telemetria=dados,
                                        supervisor=supervisor, sem_ml_forcado=sem_ml)
                 sessao.preparar()
                 return sessao
@@ -135,6 +158,11 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
             raise HTTPException(409, {"mensagem": str(erro)}) from None
         return para_json({"bloco": k, "entradas": resultado.entradas, "espera_s": round(resultado.espera_s, 3),
                           "latencia_s": round(resultado.latencia_s, 3), "proximo_bloco": sessao.proximo_bloco})
+
+    @app.get("/sessao/previsao")
+    async def ver_previsao() -> dict[str, Any]:
+        sessao = sessao_atual()
+        return {"sessao": sessao.id, "previsao": sessao.previsao_atual()}
 
     @app.post("/sessao/estado", status_code=204)
     async def receber_estado(estado_caminhao: EstadoModelo) -> None:

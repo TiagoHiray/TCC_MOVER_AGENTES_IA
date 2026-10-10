@@ -116,6 +116,7 @@ class OpcoesSessao:
     sem_ml: bool = False
     fator_tempo: float = 1.0   # velocidade do replay (2 = duas vezes mais rápido), para os avisos de atraso
     tempo_real: bool = True    # False com --sem-espera: o caminhão não segue o relógio e esperar é normal
+    volta: str | None = None   # volta da Fase X (data/voltas/<volta>) analisada nesta sessão
 
 
 class BlocoForaDeOrdem(Exception):
@@ -181,6 +182,7 @@ class SessaoAgentes:
             "duracao_volta_s": round(float(self._t[-1] - self._t[0] + 1.0 / self.camada.taxa_hz), 2),
             "taxa_hz": self.camada.taxa_hz,
             "injetar_eventos": self.opcoes.injetar_eventos,
+            "volta": self.opcoes.volta,
             "fator_tempo": self.opcoes.fator_tempo,
             "tempo_real": self.opcoes.tempo_real,
             "llm": getattr(llm, "nome", None) or "texto-modelo",

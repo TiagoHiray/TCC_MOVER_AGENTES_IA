@@ -111,6 +111,18 @@ conhecimento:
     consequencia: sobrecarrega a suspensão, os pneus e a carga
     acao: chegar mais devagar e atravessar a irregularidade sem frear nem acelerar
 
+ajustes:
+  # Malha fechada com o CARLA: cada problema previsto vira uma zona onde o caminhão com agentes (Y)
+  # suaviza a velocidade do plano do autônomo (X), sem nunca passar dela. Os números saem destas
+  # regras, nunca do LLM. Tempos no relógio do plano X.
+  ativo: true
+  antecedencia_s: 6.0        # a zona começa antes do evento (frear antes, com suavidade)
+  depois_s: 6.0              # e termina depois dele (retomada suave)
+  janela_s: 4.0              # mínimo móvel + médias móveis: jerk de até ~4 x variação de velocidade / janela²
+  rampa_s: 1.0               # entrada e saída da zona com rampa de cosseno
+  vel_lombada_kmh: 12        # teto na irregularidade da via (provável lombada)
+  margem_lombada_s: 0.5
+
 eventos_sinteticos:
   # Usados só com --injetar-eventos. As linhas alteradas recebem fonte = sintetico.
   # Mudam acc_long, jerk_long, acc_x/acc_y, imu_acc_x, comandos estimados e manobra;

@@ -1,10 +1,14 @@
 # MOVER: gêmeo digital do caminhão com camada agêntica
 
-Código das etapas 1 a 4 do TCC. A volta gravada pelo celular no campus do IMT vira telemetria no
-formato do CARLA. Uma camada agêntica escreve o log da condução em linguagem natural e aponta os
-problemas de jerk. O caminhão do CARLA refaz a volta em blocos de 10 s, e os agentes analisam cada
-bloco antes de o caminhão chegar nele. Uma página com 4 painéis (simulação, dashboard, log e chat)
-acompanha tudo ao vivo.
+Código das etapas 1 a 4 do TCC. **Escopo atual:** o caminhão autônomo do CARLA (X) dá voltas
+aleatórias no campus do IMT e grava o seu plano; depois o mesmo caminhão refaz cada volta com a
+camada agêntica (Y): os agentes recebem os 10 s seguintes do plano antes de o caminhão executá-los e
+devolvem ajustes que mudam a condução no simulador (ver [Voltas X e Y](#voltas-x-e-y-escopo-atual)).
+
+O fluxo anterior continua disponível: a volta gravada pelo celular no campus vira telemetria no
+formato do CARLA, a camada agêntica escreve o log da condução em linguagem natural e aponta os
+problemas de jerk, e o caminhão do CARLA refaz a volta em blocos de 10 s. Uma página com 4 painéis
+(simulação, dashboard, log e chat) acompanha tudo ao vivo.
 
 ```
 data/csv_maua ──(1) tratamento──▶ data/tratado/telemetria_tratada.csv (20 Hz, colunas do coleta_carla)
@@ -30,13 +34,16 @@ config/
 src/mover/
   config.py            raiz do projeto e leitura dos YAML
   tratamento/          sensor_logger, geo, calibracao, fusao, sinais, tratar_dados, validar
-  agentes/             fatos, especialistas, textos, llm, supervisor, grafo, executor,
+  agentes/             fatos, especialistas, textos, llm, supervisor, grafo, executor, ajustes,
                        eventos_sinteticos, treinar_especialista_ml, rodar_agentes
   simulacao/           opendrive, projecao, alinhamento, verificar_mapa, camera_painel,
-                       fila_envio, replay_carla
+                       fila_envio, replay_carla, voltas_autonomas (X), voltas_com_agentes (Y),
+                       plano_velocidade, benchmark_tempo_real
   servidor/            app (FastAPI + WebSocket), sessao, rodar_servidor
   interface/           rotas, cena, chat e estatico/ (index.html, painel.css e 6 módulos JS)
-tests/                 auxiliares, conftest, test_agentes, test_servidor, test_simulacao, test_interface
+  ingestao/, gemeo/    HTTP Push do Sensor Logger e estado ao vivo (EKF causal)
+tests/                 auxiliares, conftest e test_* (agentes, servidor, simulacao, interface,
+                       ingestao, gemeo, voltas)
 requirements-mover.txt
 .env.mover.example
 ```
@@ -75,6 +82,42 @@ python -m venv .venv
   provedor `falso` não usa rede e serve para testar o fluxo inteiro.
 
 Todos os comandos abaixo rodam a partir da pasta `src/`.
+
+## Voltas X e Y (escopo atual)
+
+- **X (caminhão autônomo):** o firetruck anda sozinho no `mapa_final.xodr` com o autopilot do Traffic
+  Manager, em modo síncrono a 20 Hz. Cada volta tem uma semente (ponto de partida, velocidade desejada
+  e conversões nas junções) e é gravada no formato da Etapa 1. Esse é o plano: o que o caminhão *vai*
+  fazer.
+- **Y (caminhão + agentes):** o caminhão refaz a volta. Ao entrar no bloco k, os agentes já analisaram
+  o bloco k e começam o k+1, ou seja, leem os 10 s seguintes do plano antes de o caminhão chegar lá.
+  Cada problema de jerk previsto vira um **ajuste** (zona onde a velocidade é suavizada e, numa lombada,
+  limitada). O caminhão aplica o ajuste assim que a análise termina: freia antes e com suavidade, sem
+  nunca passar da velocidade de X no mesmo ponto do caminho. Se a análise do próximo bloco atrasar, o
+  caminhão espera no ponto de decisão (6 s antes do bloco).
+
+Na máquina do CARLA (CarlaUE4 0.9.16 aberto, ambiente Python 3.12 com `carla==0.9.16`):
+
+```bash
+python -m mover.simulacao.voltas_autonomas --voltas 3 --duracao 60     # teste rápido da Fase X
+python -m mover.simulacao.voltas_autonomas                             # 50 voltas -> data/voltas/volta_NNN/
+python -m mover.agentes.treinar_especialista_ml --entrada data/voltas  # (opcional) ML treinado nas voltas do CARLA
+python -m mover.simulacao.voltas_com_agentes --iniciar-servidor --volta volta_001 --manter-servidor
+python -m mover.simulacao.voltas_com_agentes --iniciar-servidor        # todas as voltas, em sequência
+```
+
+- Saídas por volta: `telemetria.csv` e `volta.json` (X); `telemetria_y.csv`, `comparacao.json` e o log
+  da sessão (Y). Cada execução da Fase Y grava uma linha por volta em
+  `data/resultados_pesquisa/voltas_agentes_<data>.csv` (eventos de jerk X x Y, jerk máximo, ajustes,
+  tempo a mais de volta). `data/voltas/` fica fora do git.
+- Opções da Fase X: `--semente`, `--pasta`, `--manter-mundo`, `--sem-renderizacao` (mais rápido),
+  `--sem-camera`. O Traffic Manager usa a porta 8100 (a 8000 é a da página).
+- Opções da Fase Y: as mesmas do replay (`--provedor`, `--fator-tempo`, `--sem-espera`, `--camera`,
+  `--sem-camera-painel`, `--sem-ml`, `--injetar-eventos`), mais `--volta` e `--quantidade`.
+- Sem o CARLA, para testar os agentes em malha fechada:
+  `python -m mover.simulacao.voltas_com_agentes --sem-carla --iniciar-servidor --sem-espera --provedor falso`.
+- Parâmetros: seção `voltas` do `config/simulacao.yaml` (quantidade, duração, velocidades, porta do TM)
+  e seção `ajustes` do `config/agentes.yaml` (antecedência, janela de suavização, teto na lombada).
 
 ## Etapa 1: tratamento dos dados
 
@@ -231,11 +274,17 @@ python -m mover.simulacao.benchmark_tempo_real --horizonte 10 --repeticoes 5
 ## Testes
 
 ```bash
-python -m pytest tests -q     # a partir da raiz do projeto: 51 testes, sem CARLA, sem LLM e sem navegador
+python -m pytest tests -q     # a partir da raiz do projeto: 59 testes (um só roda com o pyproj), sem CARLA, sem LLM e sem navegador
 ```
 
 ## Limitações conhecidas
 
+- As Fases X e Y não foram rodadas num CARLA de verdade: as chamadas do Traffic Manager e dos sensores
+  foram conferidas contra a documentação do 0.9.16 e testadas com um módulo falso.
+- Na Fase Y a pose é imposta (física desligada), como no replay: o ajuste muda a velocidade ao longo
+  do caminho de X, não o caminho.
+- Na Fase X, latitude e longitude saem do inverso do alinhamento da Etapa 3 (aproximadas).
+- O especialista de ML continua treinado na volta do celular até ser retreinado com as voltas do CARLA.
 - O replay não foi rodado num CARLA de verdade. As chamadas foram conferidas contra o pacote
   `carla` 0.9.16, e o lado CARLA (câmera incluída) foi testado com um módulo falso.
 - Nenhum LLM real foi testado; só o provedor `falso` e, nos testes, um LLM de roteiro.

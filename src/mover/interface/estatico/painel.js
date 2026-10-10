@@ -469,8 +469,8 @@ function atualizarHud(t, k, problemas) {
     titulo = "Sem conexão com o servidor";
     detalhe = "tentando reconectar…";
   } else if (!s) {
-    titulo = "Aguardando o replay";
-    detalhe = "python -m mover.simulacao.replay_carla --iniciar-servidor";
+    titulo = "Aguardando uma volta";
+    detalhe = "python -m mover.simulacao.voltas_com_agentes --iniciar-servidor";
   } else if (!u && !s.encerrada) {
     titulo = "Bloco 00 analisado · partindo";
   }
