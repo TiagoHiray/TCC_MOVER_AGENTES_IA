@@ -38,7 +38,7 @@ from mover.servidor.app import criar_app
 from mover.simulacao import voltas_autonomas
 from mover.simulacao.opendrive import ler_xodr
 from mover.simulacao.plano_velocidade import PlanoVelocidade, perfil_ajustado, suavizar_abaixo
-from mover.simulacao.replay_carla import ClienteAgentes, MundoFalso
+from mover.simulacao.replay_carla import ClienteAgentes, MundoCarla, MundoFalso
 from mover.simulacao.voltas_autonomas import ColetorVoltas, salvar_volta, telemetria_carla
 from mover.simulacao.voltas_com_agentes import (comparar, poses_no_mapa, rodar_volta_y, telemetria_executada,
                                                 trajeto_da_volta)
@@ -505,6 +505,24 @@ def test_volta_com_agentes_recebe_o_ajuste_antes_e_passa_sem_a_frenagem_brusca(c
     assert comparacao["x"]["eventos"] == 1 and comparacao["y"]["eventos"] == 0
     assert comparacao["y"]["jerk_max_abs_mps3"] < 2.5 < comparacao["x"]["jerk_max_abs_mps3"]
     assert comparacao["acrescimo_tempo_s"] > 0
+
+
+def test_mundo_sem_renderizacao_nao_renderiza_nem_cria_a_camera_do_painel(monkeypatch, cfg_trat):
+    from test_simulacao import carla_falso  # o mesmo CARLA falso dos testes do replay
+
+    carla = carla_falso()
+    monkeypatch.setitem(sys.modules, "carla", carla)
+    tel = telemetria_carla(bruto(np.full(100, 5.0)), cfg_trat, INICIO)
+    mundo = MundoCarla(carregar_yaml("config/simulacao.yaml"), sem_renderizacao=True)
+    mundo.conectar()
+    mundo.ligar_camera_painel(lambda jpeg: None)
+    mundo.preparar(trajeto_da_volta(tel), "<OpenDRIVE/>", tel)
+    world = carla.cliente.mundo
+    assert world.config.no_rendering_mode and mundo.camera_painel is None and not world.sensores
+    mundo.aplicar_em(2.5)  # entre quadros: 2,5 s a 5 m/s
+    assert world.ator.transformacoes[-1].location.x == pytest.approx(12.5)
+    mundo.encerrar()
+    assert world.aplicadas[-1] == (False, None) and world.ator.destruido
 
 
 def test_cena_da_volta_e_treino_do_ml_com_as_voltas_da_fase_x(cfg, cfg_trat, tmp_path):

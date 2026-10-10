@@ -113,7 +113,8 @@ python -m mover.simulacao.voltas_com_agentes --iniciar-servidor        # todas a
 - Opções da Fase X: `--semente`, `--pasta`, `--manter-mundo`, `--sem-renderizacao` (mais rápido),
   `--sem-camera`. O Traffic Manager usa a porta 8100 (a 8000 é a da página).
 - Opções da Fase Y: as mesmas do replay (`--provedor`, `--fator-tempo`, `--sem-espera`, `--camera`,
-  `--sem-camera-painel`, `--sem-ml`, `--injetar-eventos`), mais `--volta` e `--quantidade`.
+  `--sem-camera-painel`, `--sem-ml`, `--injetar-eventos`), mais `--volta`, `--quantidade` e
+  `--sem-renderizacao` (sem imagem; a página mostra o mapa 2D).
 - Sem o CARLA, para testar os agentes em malha fechada:
   `python -m mover.simulacao.voltas_com_agentes --sem-carla --iniciar-servidor --sem-espera --provedor falso`.
 - Parâmetros: seção `voltas` do `config/simulacao.yaml` (quantidade, duração, velocidades, porta do TM)
@@ -274,7 +275,7 @@ python -m mover.simulacao.benchmark_tempo_real --horizonte 10 --repeticoes 5
 ## Testes
 
 ```bash
-python -m pytest tests -q     # a partir da raiz do projeto: 59 testes (um só roda com o pyproj), sem CARLA, sem LLM e sem navegador
+python -m pytest tests -q     # a partir da raiz do projeto: 60 testes (um só roda com o pyproj), sem CARLA, sem LLM e sem navegador
 ```
 
 ## Limitações conhecidas
