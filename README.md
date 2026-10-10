@@ -155,10 +155,48 @@ O que a página mostra:
   mesmo provedor de LLM, e uma guarda confere números e citações. Se o LLM falhar ou a resposta for
   recusada, vale uma resposta por busca no log.
 
+## Ingestão ao vivo do Sensor Logger (HTTP Push)
+
+O servidor também recebe o HTTP Push do Sensor Logger em `POST /ingestao/sensorlogger` e grava cada
+gravação em `data/ingestao/<data>_<sessão>/` (`raw.jsonl` + um CSV por sensor). O andamento fica em
+`GET /ingestao/status`.
+
+1. Suba o servidor aceitando conexões da rede local:
+
+   ```bash
+   python -m mover.servidor.rodar_servidor --host 0.0.0.0
+   ```
+
+   Na máquina de campo, que só recebe os dados, basta o servidor de ingestão (não carrega numpy,
+   scipy, agentes nem CARLA; escuta em 0.0.0.0 por padrão):
+
+   ```bash
+   python -m mover.ingestao.rodar_ingestao
+   ```
+
+   No Windows, libere a porta uma vez (PowerShell como administrador):
+   `New-NetFirewallRule -DisplayName "MOVER 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow -Profile Any`
+
+2. No celular, conectado à mesma rede (por exemplo, o notebook no hotspot do iPhone): Settings >
+   Data Streaming > HTTP Push, Push URL `http://<IP do notebook>:8000/ingestao/sensorlogger`, batch
+   period de 200 ms. "Tap to Test Pushing" deve responder 200. O IP sai do `ipconfig`.
+3. Inicie a gravação e acompanhe o log do servidor ou `http://<IP>:8000/ingestao/status`.
+
+Sem o celular, reenvie uma gravação já exportada no mesmo formato e no mesmo ritmo:
+
+```bash
+python -m mover.ingestao.replay_csv --duracao 30            # data/csv_maua, tempo real
+python -m mover.ingestao.replay_csv --fator-tempo 5 --sensores location accelerometer gyroscope
+```
+
+- Token opcional: `MOVER_INGESTAO_TOKEN` no `.env`. A Push URL passa a terminar com `?token=<valor>`.
+- A latência do status só faz sentido com os relógios do celular e do notebook sincronizados (NTP).
+- Use apenas em rede local; não exponha a porta para a internet.
+
 ## Testes
 
 ```bash
-python -m pytest tests -q     # a partir da raiz do projeto: 42 testes, sem CARLA, sem LLM e sem navegador
+python -m pytest tests -q     # a partir da raiz do projeto: 46 testes, sem CARLA, sem LLM e sem navegador
 ```
 
 ## Limitações conhecidas
