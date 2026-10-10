@@ -22,11 +22,20 @@ log = logging.getLogger("mover.ingestao")
 
 
 def ips_locais() -> list[str]:
+    ips: list[str] = []
     try:
-        ips = socket.gethostbyname_ex(socket.gethostname())[2]
+        # IP da rota padrão (nenhum pacote é enviado em UDP connect)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ips.append(s.getsockname()[0])
     except OSError:
-        ips = []
-    return [ip for ip in ips if not ip.startswith("127.")] or ["127.0.0.1"]
+        pass
+    try:
+        ips += [i[4][0] for i in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
+    except OSError:
+        pass
+    unicos = [ip for ip in dict.fromkeys(ips) if not ip.startswith("127.")]
+    return unicos or ["127.0.0.1"]
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -44,6 +53,7 @@ def main(argv: list[str] | None = None) -> None:
     from mover.ingestao.rotas import instalar_ingestao
 
     cfg = carregar_yaml(args.config) if caminho(args.config).exists() else {}
+    log.info("Use o IPv4 da placa Wi-Fi conectada ao celular (ipconfig), não o da VPN.")
     app = FastAPI(title="MOVER - ingestão do Sensor Logger")
     instalar_ingestao(app, cfg)
 
