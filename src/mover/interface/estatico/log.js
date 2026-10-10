@@ -154,6 +154,11 @@ export class PainelLog {
         acao.append(el("strong", null, "Ação: "), document.createTextNode(e.acao));
         li.append(acao);
       }
+      if (e.ajuste) {
+        const ajuste = el("p", "entrada-acao");
+        ajuste.append(el("strong", null, "Ajuste no caminhão: "), document.createTextNode(e.ajuste.descricao));
+        li.append(ajuste);
+      }
     } else {
       li.append(el("p", "entrada-texto", e.texto));
     }
@@ -198,7 +203,7 @@ export class PainelLog {
     cab.append(titulo);
     if (info.estado === "sem-sessao") {
       cab.append(el("span", "previsao-detalhe", "sem volta em andamento"));
-      c.append(cab, el("p", "previsao-texto", "Rode o replay (python -m mover.simulacao.replay_carla) para a camada agêntica começar."));
+      c.append(cab, el("p", "previsao-texto", "Rode uma volta (python -m mover.simulacao.voltas_com_agentes) para a camada agêntica começar."));
       return;
     }
     if (info.estado === "ultimo") {

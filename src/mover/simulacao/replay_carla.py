@@ -41,6 +41,7 @@ import sys
 import time
 import unicodedata
 from dataclasses import asdict, dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -87,6 +88,15 @@ class Trajeto:
 
     def __len__(self) -> int:
         return len(self.t)
+
+    @cached_property
+    def yaw_continuo(self) -> np.ndarray:
+        return np.degrees(np.unwrap(np.radians(self.yaw)))
+
+    def pose_em(self, t: float) -> tuple[float, float, float]:
+        """(x, y, yaw) no instante t, interpolados entre quadros; yaw em [-180, 180)."""
+        yaw = float(np.interp(t, self.t, self.yaw_continuo))
+        return float(np.interp(t, self.t, self.x)), float(np.interp(t, self.t, self.y)), (yaw + 180.0) % 360.0 - 180.0
 
     def quadro_mais_proximo(self, t: float) -> int:
         i = int(np.clip(np.searchsorted(self.t, t), 0, len(self.t) - 1))
@@ -215,6 +225,13 @@ class ClienteAgentes:
         """Bloqueante: volta com as entradas do bloco k (normalmente já prontas)."""
         return self._conteudo(self.http.post(f"/sessao/blocos/{k}"), f"entrar no bloco {k}")
 
+    def previsao(self) -> dict[str, Any] | None:
+        """Próximo bloco já analisado e ainda não percorrido (GET /sessao/previsao), ou None."""
+        resposta = self.http.get("/sessao/previsao")
+        if resposta.status_code >= 400:
+            return None
+        return resposta.json().get("previsao")
+
     def enviar_cena(self, cena: dict[str, Any]) -> bool:
         """Manda à interface as vias e o trajeto alinhado (PUT /cena). Se falhar, a página usa a cena do config."""
         try:
@@ -274,10 +291,26 @@ class ClienteAgentes:
 class Mundo(Protocol):
     def preparar(self, trajeto: Trajeto, texto_xodr: str | None, telemetria: pd.DataFrame) -> None: ...
     def aplicar(self, i: int) -> None: ...
+    def aplicar_em(self, t: float) -> None: ...
     def avancar(self) -> None: ...
     def altura(self, i: int) -> float: ...
+    def altura_em(self, t: float) -> float: ...
     def marcar_problemas(self, marcas: list[tuple[int, dict[str, Any]]]) -> None: ...
     def encerrar(self) -> None: ...
+
+
+def parametros_opendrive(carla: Any, cc: dict[str, Any]) -> Any:
+    """Parâmetros da geração do mundo OpenDRIVE (seção carla.opendrive do YAML)."""
+    p = cc.get("opendrive", {})
+    return carla.OpendriveGenerationParameters(
+        vertex_distance=float(p.get("vertex_distance", 2.0)),
+        max_road_length=float(p.get("max_road_length", 50.0)),
+        wall_height=float(p.get("wall_height", 0.0)),
+        additional_width=float(p.get("additional_width", 0.6)),
+        smooth_junctions=bool(p.get("smooth_junctions", True)),
+        enable_mesh_visibility=bool(p.get("enable_mesh_visibility", True)),
+        enable_pedestrian_navigation=bool(p.get("enable_pedestrian_navigation", True)),
+    )
 
 
 class MundoFalso:
@@ -296,10 +329,16 @@ class MundoFalso:
     def aplicar(self, i: int) -> None:
         self.ultima_pose = (float(self.trajeto.x[i]), float(self.trajeto.y[i]), float(self.trajeto.yaw[i]))
 
+    def aplicar_em(self, t: float) -> None:
+        self.ultima_pose = self.trajeto.pose_em(t)
+
     def avancar(self) -> None:
         self.quadros += 1
 
     def altura(self, i: int) -> float:
+        return 0.0
+
+    def altura_em(self, t: float) -> float:
         return 0.0
 
     def marcar_problemas(self, marcas: list[tuple[int, dict[str, Any]]]) -> None:
@@ -370,18 +409,8 @@ class MundoCarla:
         carla = self.carla
         self.trajeto = trajeto
         if not self.manter_mundo:
-            p = self.cc.get("opendrive", {})
-            parametros = carla.OpendriveGenerationParameters(
-                vertex_distance=float(p.get("vertex_distance", 2.0)),
-                max_road_length=float(p.get("max_road_length", 50.0)),
-                wall_height=float(p.get("wall_height", 0.0)),
-                additional_width=float(p.get("additional_width", 0.6)),
-                smooth_junctions=bool(p.get("smooth_junctions", True)),
-                enable_mesh_visibility=bool(p.get("enable_mesh_visibility", True)),
-                enable_pedestrian_navigation=bool(p.get("enable_pedestrian_navigation", True)),
-            )
             log.info("Gerando o mundo OpenDRIVE no CARLA (pode levar alguns segundos)...")
-            self.world = self.client.generate_opendrive_world(texto_xodr, parametros)
+            self.world = self.client.generate_opendrive_world(texto_xodr, parametros_opendrive(carla, self.cc))
         self._config_original = self.world.get_settings()
         config = self.world.get_settings()
         config.synchronous_mode = True
@@ -470,13 +499,24 @@ class MundoCarla:
     def altura(self, i: int) -> float:
         return float(self.z_estrada[i])
 
+    def altura_em(self, t: float) -> float:
+        return float(np.interp(t, self.trajeto.t, self.z_estrada))
+
     def aplicar(self, i: int) -> None:
-        carla, tr = self.carla, self.trajeto
-        z = float(self.z_estrada[i]) - self._base_z + float(self.cv.get("altura_extra_m", 0.05))
-        transformacao = carla.Transform(carla.Location(x=float(tr.x[i]), y=float(tr.y[i]), z=z),
-                                        carla.Rotation(pitch=float(self.pitch[i]), yaw=float(tr.yaw[i]), roll=0.0))
+        tr = self.trajeto
+        self._impor(float(tr.x[i]), float(tr.y[i]), float(self.z_estrada[i]), float(tr.yaw[i]), float(self.pitch[i]))
+
+    def aplicar_em(self, t: float) -> None:
+        """Pose no instante t do trajeto, interpolada entre quadros (o caminhão Y anda no relógio do plano X)."""
+        x, y, yaw = self.trajeto.pose_em(t)
+        self._impor(x, y, self.altura_em(t), yaw, float(np.interp(t, self.trajeto.t, self.pitch)))
+
+    def _impor(self, x: float, y: float, z_estrada: float, yaw: float, pitch: float) -> None:
+        carla = self.carla
+        z = z_estrada - self._base_z + float(self.cv.get("altura_extra_m", 0.05))
+        transformacao = carla.Transform(carla.Location(x=x, y=y, z=z), carla.Rotation(pitch=pitch, yaw=yaw, roll=0.0))
         self.ator.set_transform(transformacao)
-        self._camera(float(tr.x[i]), float(tr.y[i]), float(self.z_estrada[i]), float(tr.yaw[i]))
+        self._camera(x, y, z_estrada, yaw)
 
     def avancar(self) -> None:
         self.world.tick()
@@ -554,8 +594,8 @@ class ResultadoReplay:
         return dados
 
 
-def _mostrar_bloco(resposta: dict[str, Any], t0: float, duracao: float, imprimir: Callable[[str], None],
-                   silencioso: bool) -> None:
+def mostrar_bloco(resposta: dict[str, Any], t0: float, duracao: float, imprimir: Callable[[str], None],
+                  silencioso: bool) -> None:
     k, entradas = resposta["bloco"], resposta["entradas"]
     n_problemas = sum(e["tipo"] == "problema" for e in entradas)
     imprimir(f"=== Bloco {k:02d} ({t0 + k * duracao:.0f}-{t0 + (k + 1) * duracao:.0f} s): {len(entradas)} entrada(s), "
@@ -596,7 +636,7 @@ def rodar_replay(trajeto: Trajeto, cliente: ClienteAgentes, mundo: Mundo, sessao
                     resultado.blocos.append({"bloco": kk, "espera_s": resposta["espera_s"],
                                              "latencia_s": resposta["latencia_s"], "n_entradas": len(entradas),
                                              "n_problemas": sum(e["tipo"] == "problema" for e in entradas)})
-                    _mostrar_bloco(resposta, t0, duracao, imprimir, silencioso)
+                    mostrar_bloco(resposta, t0, duracao, imprimir, silencioso)
                     marcas = [(trajeto.quadro_mais_proximo(float(e["t_pico"])), e) for e in entradas
                               if e["tipo"] == "problema" and e.get("t_pico") is not None]
                     if marcar_problemas and marcas:

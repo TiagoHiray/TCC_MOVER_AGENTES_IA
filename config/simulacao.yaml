@@ -86,6 +86,21 @@ servidor:
   pasta_sessoes: data/agentes/sessoes
   timeout_bloco_s: 300             # quanto o replay espera a análise de um bloco
 
+# Fase X (voltas_autonomas.py): voltas autônomas do caminhão com o Traffic Manager, uma semente por volta.
+# Fase Y (voltas_com_agentes.py): as mesmas voltas com a camada agêntica em malha fechada.
+voltas:
+  pasta: data/voltas               # volta_001/telemetria.csv + volta.json (a Fase Y acrescenta telemetria_y.csv)
+  quantidade: 50
+  semente_inicial: 1               # a semente de cada volta fica no volta.json (reproduz a volta)
+  duracao_s: 150                   # ~15 blocos de 10 s, como a volta gravada no campus
+  duracao_min_s: 30                # voltas mais curtas (caminhão travado ou removido) são descartadas
+  aquecimento_s: 1.0               # o caminhão assenta no asfalto antes de o autopilot assumir
+  velocidade_kmh: [20, 30]         # velocidade desejada do Traffic Manager, sorteada por volta
+  porta_tm: 8100                   # porta do Traffic Manager (a 8000 é a do servidor da página)
+  max_parado_s: 30
+  consulta_previsao_s: 0.5         # Fase Y: de quanto em quanto o caminhão pergunta pelos ajustes do próximo bloco
+  rampa_replanejamento_s: 1.5      # Fase Y: ajuste que chega com a zona já começada entra nesta rampa
+
 # HTTP Push do Sensor Logger (POST /ingestao/sensorlogger). Token opcional: MOVER_INGESTAO_TOKEN no .env
 ingestao:
   pasta: data/ingestao             # uma subpasta por gravação: raw.jsonl + um CSV por sensor

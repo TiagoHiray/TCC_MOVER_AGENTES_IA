@@ -3,6 +3,7 @@
 Uso, a partir da pasta src/ do repositório:
     python -m mover.agentes.treinar_especialista_ml
     python -m mover.agentes.treinar_especialista_ml --entrada data/tratado/telemetria_tratada.csv
+    python -m mover.agentes.treinar_especialista_ml --entrada data/voltas    # todas as voltas da Fase X (CARLA)
 
 Grava data/modelos/especialista_ml.joblib (modelo + lista de features) e um JSON de
 metadados ao lado. Não mexe no data/modelo_especialista.joblib da POC.
@@ -38,18 +39,30 @@ from mover.config import RAIZ, caminho, carregar_yaml
 log = logging.getLogger("mover.agentes")
 
 
-def treinar(cfg: dict[str, Any], entrada: Path | None = None, saida: Path | None = None) -> dict[str, Any]:
+def arquivos_de_treino(entradas: list[Path]) -> list[Path]:
+    """CSVs informados; uma pasta conta como as voltas da Fase X dentro dela (*/telemetria.csv)."""
+    arquivos: list[Path] = []
+    for entrada in entradas:
+        arquivos += sorted(entrada.glob("*/telemetria.csv")) if entrada.is_dir() else [entrada]
+    return arquivos
+
+
+def treinar(cfg: dict[str, Any], entrada: Path | list[Path] | None = None, saida: Path | None = None) -> dict[str, Any]:
     """Treina, grava o modelo e devolve os metadados."""
     import joblib
     import sklearn
     from sklearn.ensemble import IsolationForest
 
     cm = cfg["especialista_ml"]
-    entrada = entrada or caminho(cfg["entrada"]["telemetria"])
+    if entrada is None:
+        entrada = caminho(cfg["entrada"]["telemetria"])
+    arquivos = arquivos_de_treino([Path(entrada)] if isinstance(entrada, (str, Path)) else [Path(e) for e in entrada])
+    if not arquivos:
+        raise SystemExit(f"Nenhuma telemetria para treinar em {entrada}.")
     saida = saida or caminho(cm["modelo"])
     features = list(cm["features"])
 
-    df = pd.read_csv(entrada)
+    df = pd.concat([pd.read_csv(arquivo) for arquivo in arquivos], ignore_index=True)
     if "fonte" in df.columns:
         df = df[df["fonte"] == "real"]
     x = df[features].dropna()
@@ -63,10 +76,15 @@ def treinar(cfg: dict[str, Any], entrada: Path | None = None, saida: Path | None
 
     rotulos = modelo.predict(x)
     pontuacao = modelo.decision_function(x)
-    try:
-        origem = str(Path(entrada).resolve().relative_to(RAIZ))
-    except ValueError:
-        origem = str(entrada)
+
+    def relativo(arquivo: Path) -> str:
+        try:
+            return str(arquivo.resolve().relative_to(RAIZ))
+        except ValueError:
+            return str(arquivo)
+
+    origem = relativo(arquivos[0]) if len(arquivos) == 1 else \
+        f"{len(arquivos)} arquivos, de {relativo(arquivos[0])} a {relativo(arquivos[-1])}"
     metadados = {
         "treinado_em": datetime.now().astimezone().isoformat(timespec="seconds"),
         "origem": origem,
@@ -95,13 +113,14 @@ def treinar(cfg: dict[str, Any], entrada: Path | None = None, saida: Path | None
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Retreina o IsolationForest do especialista de ML.")
     parser.add_argument("--config", default="config/agentes.yaml", help="YAML da camada agêntica")
-    parser.add_argument("--entrada", help="CSV de telemetria tratada (padrão: YAML)")
+    parser.add_argument("--entrada", nargs="+", help="CSV(s) de telemetria ou a pasta das voltas da Fase X (padrão: YAML)")
     parser.add_argument("--saida", help="arquivo .joblib de saída (padrão: YAML)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(message)s")
     cfg = carregar_yaml(args.config)
-    treinar(cfg, caminho(args.entrada) if args.entrada else None, caminho(args.saida) if args.saida else None)
+    treinar(cfg, [caminho(e) for e in args.entrada] if args.entrada else None,
+            caminho(args.saida) if args.saida else None)
 
 
 if __name__ == "__main__":

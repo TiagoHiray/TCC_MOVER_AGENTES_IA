@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from mover.simulacao.alinhamento import ResultadoAlinhamento
 from mover.simulacao.opendrive import MapaOpenDrive
@@ -24,6 +25,12 @@ SALTO_MAX_M = 2.0  # pontos seguidos de uma via mais distantes que isso são de 
 def montar_cena(mapa: MapaOpenDrive, alinhamento: ResultadoAlinhamento, origem: str = "replay",
                 passo_trajeto: int = 2, casas: int = 2) -> dict[str, Any]:
     """Vias como polilinhas (com a largura da faixa) e o trajeto com tempo e rumo, a cada `passo_trajeto` quadros."""
+    return montar_cena_poses(mapa, alinhamento.poses, origem, passo_trajeto, casas)
+
+
+def montar_cena_poses(mapa: MapaOpenDrive, poses: pd.DataFrame, origem: str = "replay", passo_trajeto: int = 2,
+                      casas: int = 2) -> dict[str, Any]:
+    """Como montar_cena, a partir das poses (sim_time, x_mapa, y_mapa, yaw_carla) de qualquer volta."""
     vias: list[dict[str, Any]] = []
     for via in dict.fromkeys(mapa.vias.tolist()):  # ordem de aparição no .xodr
         indices = np.flatnonzero(mapa.vias == via)
@@ -34,7 +41,7 @@ def montar_cena(mapa: MapaOpenDrive, alinhamento: ResultadoAlinhamento, origem: 
                 vias.append({"via": str(via), "largura_m": round(float(np.median(mapa.larguras[idx])), 2),
                              "pontos": np.round(trecho, casas).tolist()})
 
-    poses = alinhamento.poses.iloc[::max(1, int(passo_trajeto))]
+    poses = poses.iloc[::max(1, int(passo_trajeto))]
     x, y = poses["x_mapa"].to_numpy(float), poses["y_mapa"].to_numpy(float)
     trajeto = {
         "t": np.round(poses["sim_time"].to_numpy(float), 3).tolist(),

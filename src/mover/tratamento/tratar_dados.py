@@ -206,8 +206,8 @@ def _estimar_controles(a_long, v, rampa, w_cima, veic: dict, vel_parado: float):
     return throttle, brake, steer
 
 
-def _rotular_manobras(a_long, w_dps, v, cfg_m: dict, hz: float) -> np.ndarray:
-    """Rótulos com o vocabulário do coleta_carla v7, com filtro de moda."""
+def rotular_manobras(a_long, w_dps, v, cfg_m: dict, hz: float) -> np.ndarray:
+    """Rótulos com o vocabulário do coleta_carla v7, com filtro de moda (w_dps positivo à esquerda)."""
     rot = np.full(len(v), "cruzeiro", dtype=object)
     rot[a_long >= cfg_m["acel_limiar_mps2"]] = "acelerar"
     rot[a_long <= -cfg_m["acel_limiar_mps2"]] = "frear"
@@ -376,7 +376,7 @@ def tratar(cfg: dict, entrada: Path, saida: Path, gerar_figuras: bool = True) ->
     veic, cm = cfg["veiculo"], cfg["manobras"]
     a_long_suave = passa_baixa(a_long, hz, cf["jerk_corte_hz"], ordem)
     throttle, brake, steer = _estimar_controles(a_long_suave, v, rampa, w_corr, veic, cm["vel_parado_mps"])
-    manobra = _rotular_manobras(passa_baixa(a_long, hz, cf["manobra_corte_hz"], ordem),
+    manobra = rotular_manobras(passa_baixa(a_long, hz, cf["manobra_corte_hz"], ordem),
                                 np.degrees(passa_baixa(w_corr, hz, cf["manobra_corte_hz"], ordem)), v, cm, hz)
     with np.errstate(divide="ignore", invalid="ignore"):
         curvatura = np.where(v >= 1.0, -w_corr / v, np.nan)

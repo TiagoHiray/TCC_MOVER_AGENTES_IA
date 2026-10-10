@@ -9,7 +9,7 @@ Uso, a partir da pasta src/ do repositório:
 Cada linha do JSONL é uma entrada: tipo (log | problema), bloco, t_ini/t_fim, hora_local,
 nivel (info | atencao | critico), causa, evento, texto, diagnostico, acao, fatos, autor,
 texto_origem (llm | modelo), provedor, latencia_s, observacao, fonte (real | sintetico | misto),
-continuacao e mesclado_desde.
+continuacao, mesclado_desde e, nos problemas, ajuste (zona de velocidade para o caminhão).
 """
 
 from __future__ import annotations

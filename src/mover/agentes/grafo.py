@@ -11,7 +11,8 @@
 Regras de mesclagem (config/agentes.yaml, seção blocos/estado):
 - janelas seguidas com o mesmo estado (manobra predominante, faixa de velocidade, nível e
   atipicidade pelo ML) viram uma entrada só, até `mesclar_ate_s`;
-- janelas com evento de jerk nunca são mescladas e cada evento gera uma entrada de problema;
+- janelas com evento de jerk nunca são mescladas e cada evento gera uma entrada de problema,
+  com o ajuste que o caminhão deve executar (ajustes.py);
 - todo bloco tem pelo menos uma entrada de log.
 
 A memória entre blocos guarda a última entrada de log (para continuar trechos estáveis), o
@@ -29,6 +30,7 @@ import pandas as pd
 from langgraph.graph import END, START, StateGraph
 
 from mover.agentes import textos
+from mover.agentes.ajustes import PlanejadorAjustes
 from mover.agentes.especialistas import EspecialistaJerk, EspecialistaML, EventoJerk
 from mover.agentes.fatos import ORDEM_NIVEL, calcular_fatos, estado_do_trecho
 from mover.agentes.supervisor import Redacao, Supervisor
@@ -73,6 +75,7 @@ class CamadaAgentica:
         self.t0 = float(self._t[0])
         self.especialista_jerk = EspecialistaJerk(cfg["limiares"])
         self.especialista_ml = especialista_ml
+        self.planejador = PlanejadorAjustes(cfg.get("ajustes"))
         self.supervisor = supervisor
         self.memoria = memoria_inicial()
         self.grafo = self._montar_grafo()
@@ -316,4 +319,5 @@ class CamadaAgentica:
             "fonte": evento.fonte,
             **self._metadados_redacao(redacao),
             "fatos": evento.fatos(),
+            "ajuste": self.planejador.ajuste(evento),
         }
