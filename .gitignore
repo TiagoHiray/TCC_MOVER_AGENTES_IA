@@ -1,0 +1,16 @@
+# Segredos e ambientes locais
+.env
+.venv/
+venv/
+venv_carla/
+env_carla/
+.forge/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Saidas de execucao (dados de GPS brutos e simulacoes locais)
+runs/
+data/ingestao/
