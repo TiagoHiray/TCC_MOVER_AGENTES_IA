@@ -462,6 +462,21 @@ def test_coletor_descarta_volta_quando_o_traffic_manager_remove_o_caminhao(monke
     coletor.encerrar()  # idempotente
 
 
+@pytest.mark.parametrize(("max_parado_s", "motivo", "amostras"), [(1.0, "parado", 20), (0.0, "duracao", 100)])
+def test_caminhao_parado_encerra_a_volta_so_depois_do_limite_configurado(monkeypatch, max_parado_s, motivo, amostras):
+    carla = carla_da_coleta()
+    monkeypatch.setitem(sys.modules, "carla", carla)
+    cfg_sim = carregar_yaml("config/simulacao.yaml")
+    cfg_sim["voltas"]["max_parado_s"] = max_parado_s
+    coletor = ColetorVoltas(cfg_sim, seguir_camera=False)
+    coletor.conectar()
+    coletor.preparar_mundo("<OpenDRIVE/>")
+    coletor.tm.set_desired_speed = lambda ator, kmh: carla.tm.desejada.__setitem__(ator.id, 0.0)  # TM travado
+    tabela, meta = coletor.gravar_volta(3, 5.0)
+    coletor.encerrar()
+    assert meta["encerrada_por"] == motivo and len(tabela) == amostras
+
+
 # ---------------------------------------------------------------------------------------------
 # Fase Y: malha fechada de ponta a ponta (sem CARLA)
 # ---------------------------------------------------------------------------------------------

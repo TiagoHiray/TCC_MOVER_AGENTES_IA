@@ -97,7 +97,7 @@ voltas:
   aquecimento_s: 1.0               # o caminhão assenta no asfalto antes de o autopilot assumir
   velocidade_kmh: [20, 30]         # velocidade desejada do Traffic Manager, sorteada por volta
   porta_tm: 8100                   # porta do Traffic Manager (a 8000 é a do servidor da página)
-  max_parado_s: 30
+  max_parado_s: 30                 # parado (< 0,1 m/s) por mais que isso: encerra a volta e passa à próxima; 0 = nunca
   consulta_previsao_s: 0.5         # Fase Y: de quanto em quanto o caminhão pergunta pelos ajustes do próximo bloco
   rampa_replanejamento_s: 1.5      # Fase Y: ajuste que chega com a zona já começada entra nesta rampa
 

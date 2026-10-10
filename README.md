@@ -111,7 +111,7 @@ python -m mover.simulacao.voltas_com_agentes --iniciar-servidor        # todas a
   `data/resultados_pesquisa/voltas_agentes_<data>.csv` (eventos de jerk X x Y, jerk máximo, ajustes,
   tempo a mais de volta). `data/voltas/` fica fora do git.
 - Opções da Fase X: `--semente`, `--pasta`, `--manter-mundo`, `--sem-renderizacao` (mais rápido),
-  `--sem-camera`. O Traffic Manager usa a porta 8100 (a 8000 é a da página).
+  `--sem-camera`, `--max-parado` (segundos parado que encerram a volta e passam à próxima; 0 = nunca). O Traffic Manager usa a porta 8100 (a 8000 é a da página).
 - Opções da Fase Y: as mesmas do replay (`--provedor`, `--fator-tempo`, `--sem-espera`, `--camera`,
   `--sem-camera-painel`, `--sem-ml`, `--injetar-eventos`), mais `--volta`, `--quantidade` e
   `--sem-renderizacao` (sem imagem; a página mostra o mapa 2D).
@@ -275,7 +275,7 @@ python -m mover.simulacao.benchmark_tempo_real --horizonte 10 --repeticoes 5
 ## Testes
 
 ```bash
-python -m pytest tests -q     # a partir da raiz do projeto: 60 testes (um só roda com o pyproj), sem CARLA, sem LLM e sem navegador
+python -m pytest tests -q     # a partir da raiz do projeto: 62 testes (um só roda com o pyproj), sem CARLA, sem LLM e sem navegador
 ```
 
 ## Limitações conhecidas
