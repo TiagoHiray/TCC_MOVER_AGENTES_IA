@@ -167,6 +167,13 @@ gravação em `data/ingestao/<data>_<sessão>/` (`raw.jsonl` + um CSV por sensor
    python -m mover.servidor.rodar_servidor --host 0.0.0.0
    ```
 
+   Na máquina de campo, que só recebe os dados, basta o servidor de ingestão (não carrega numpy,
+   scipy, agentes nem CARLA; escuta em 0.0.0.0 por padrão):
+
+   ```bash
+   python -m mover.ingestao.rodar_ingestao
+   ```
+
    No Windows, libere a porta uma vez (PowerShell como administrador):
    `New-NetFirewallRule -DisplayName "MOVER 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow -Profile Any`
 
