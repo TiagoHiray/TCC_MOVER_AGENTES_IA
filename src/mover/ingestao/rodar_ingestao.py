@@ -2,13 +2,15 @@
 
 Para a máquina de campo, que só recebe o HTTP Push do celular. Uso, a partir de src/:
     python -m mover.ingestao.rodar_ingestao                  # 0.0.0.0:8000
-    python -m mover.ingestao.rodar_ingestao --porta 8001
+    python -m mover.ingestao.rodar_ingestao --repassar http://10.20.0.188:8000/ingestao/sensorlogger
+    python -m mover.ingestao.rodar_ingestao --gemeo          # estimador ao vivo aqui mesmo (precisa de numpy)
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import socket
 import sys
 from pathlib import Path
@@ -43,6 +45,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--config", default="config/simulacao.yaml", help="YAML com a seção ingestao")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--porta", type=int, default=8000)
+    parser.add_argument("--repassar", metavar="URL", help="reenvia cada mensagem para outra máquina (ex.: a VM)")
+    parser.add_argument("--gemeo", action="store_true", help="liga o estimador ao vivo (seção gemeo do YAML)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(message)s")
@@ -55,17 +59,32 @@ def main(argv: list[str] | None = None) -> None:
     cfg = carregar_yaml(args.config) if caminho(args.config).exists() else {}
     log.info("Use o IPv4 da placa Wi-Fi conectada ao celular (ipconfig), não o da VPN.")
     app = FastAPI(title="MOVER - ingestão do Sensor Logger")
-    instalar_ingestao(app, cfg)
+    armazem = instalar_ingestao(app, cfg)
+    repassador = None
+    if args.repassar:
+        from mover.agentes.llm import carregar_env
+        from mover.ingestao.repasse import Repassador
+
+        carregar_env()
+        repassador = Repassador(args.repassar, token=os.getenv("MOVER_INGESTAO_TOKEN") or None)
+        armazem.ouvintes.append(repassador.receber)
+        log.info("Repassando cada mensagem para %s", args.repassar)
+    if args.gemeo:
+        from mover.gemeo.servico import instalar_gemeo
+
+        instalar_gemeo(app, cfg, armazem, forcar=True)
 
     @app.get("/saude")
-    async def saude() -> dict[str, bool]:
-        return {"ok": True}
+    async def saude() -> dict[str, object]:
+        return {"ok": True, "repasse": repassador.status() if repassador else None}
 
     for ip in ips_locais():
         log.info("Push URL: http://%s:%d/ingestao/sensorlogger", ip, args.porta)
     log.info("Status:   http://127.0.0.1:%d/ingestao/status", args.porta)
     # h11/asyncio puros: não dependem de httptools/uvloop compilados (bloqueáveis por política do Windows)
     uvicorn.run(app, host=args.host, port=args.porta, http="h11", loop="asyncio", log_level="info")
+    if repassador:
+        repassador.fechar()
 
 
 if __name__ == "__main__":

@@ -36,6 +36,8 @@ def instalar_ingestao(app: FastAPI, cfg_simulacao: dict[str, Any]) -> ArmazemIng
         if token and not hmac.compare_digest(recebido or "", token):
             raise HTTPException(401, "token inválido")
 
+    app.state.autorizar_ingestao = autorizar
+
     @app.post("/ingestao/sensorlogger")
     async def receber(request: Request, token: str | None = None) -> dict[str, Any]:
         autorizar(token)

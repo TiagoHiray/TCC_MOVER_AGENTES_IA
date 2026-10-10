@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 log = logging.getLogger("mover.ingestao")
 
@@ -55,6 +55,8 @@ class ArmazemIngestao:
         self._ultima_rx_ns: int | None = None
         self._latencia_ms: float | None = None
         self._proximo_log = 0.0
+        # recebem cada mensagem aceita (repasse para a VM, estimador do gêmeo...)
+        self.ouvintes: list[Callable[[dict[str, Any]], None]] = []
 
     def _gravacao(self, sessao: str) -> _Gravacao:
         g = self._gravacoes.get(sessao)
@@ -116,13 +118,21 @@ class ArmazemIngestao:
             self._ultima_rx_ns = recv_ns
             if mais_recente is not None:
                 # só tem sentido com os relógios do celular e do servidor sincronizados (NTP)
-                self._latencia_ms = (recv_ns - mais_recente) / 1e6
+                latencia = (recv_ns - mais_recente) / 1e6
+                # a mensagem de teste do app não traz time em ns
+                if abs(latencia) < 60_000:
+                    self._latencia_ms = latencia
             agora = time.monotonic()
             if agora >= self._proximo_log:
                 self._proximo_log = agora + self.intervalo_log_s
                 log.info("Ingestão %s: %d msgs, latência ~%s ms | %s", sessao, g.mensagens,
                          "?" if self._latencia_ms is None else f"{self._latencia_ms:.0f}",
                          ", ".join(f"{k}={v.n}" for k, v in sorted(g.sensores.items())))
+        for ouvinte in self.ouvintes:
+            try:
+                ouvinte(msg)
+            except Exception:  # um ouvinte com erro não pode derrubar a ingestão
+                log.exception("Falha em um ouvinte da ingestão")
         return sum(len(r) for r in linhas.values())
 
     def status(self) -> dict[str, Any]:

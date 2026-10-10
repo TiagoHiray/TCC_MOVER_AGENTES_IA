@@ -90,3 +90,11 @@ servidor:
 ingestao:
   pasta: data/ingestao             # uma subpasta por gravação: raw.jsonl + um CSV por sensor
   max_corpo_bytes: 5000000
+
+# Estado do veículo ao vivo (EKF causal) a partir da ingestão, com a calibração de uma volta já tratada
+gemeo:
+  ativo: true
+  calibracao: data/tratado/relatorio_tratamento.json   # trocar pela volta de calibração do celular em uso
+  alinhamento: data/simulacao/alinhamento.json         # plano local -> mapa (opcional)
+  config_tratamento: config/tratamento.yaml
+  pasta: data/gemeo                # estado_ao_vivo.csv por gravação

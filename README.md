@@ -193,10 +193,45 @@ python -m mover.ingestao.replay_csv --fator-tempo 5 --sensores location accelero
 - A latência do status só faz sentido com os relógios do celular e do notebook sincronizados (NTP).
 - Use apenas em rede local; não exponha a porta para a internet.
 
+## Gêmeo ao vivo: estado do veículo em tempo real
+
+Com a seção `gemeo` do `config/simulacao.yaml` ativa, cada mensagem recebida alimenta um EKF causal
+(o mesmo modelo da Etapa 1, sem o suavizador RTS). Ele publica posição, rumo e velocidade a 20 Hz no
+plano local e no plano do mapa/CARLA, grava `data/gemeo/<data>_<sessão>/estado_ao_vivo.csv` e
+responde em `GET /gemeo/estado`. O fix do GPS chega atrasado; o filtro volta ao instante do fix e
+repropaga até o presente. Na volta gravada, o resultado ao vivo fica a ~1,3 m (mediana) do
+tratamento offline, e uma volta de 150 s é processada em ~0,3 s.
+
+Calibração: a orientação do celular vem de uma **volta de calibração** já tratada pela Etapa 1
+(`gemeo.calibracao`, padrão `data/tratado/relatorio_tratamento.json`). Ao trocar de celular ou de
+suporte, grave uma volta (com o sensor Gravity ligado), exporte, rode o tratamento e aponte o YAML
+para o novo relatório.
+
+Topologia de campo (celular -> notebook -> VM):
+
+```bash
+# VM (rede da Mauá): servidor completo, com ingestão + gêmeo + painel
+python -m mover.servidor.rodar_servidor --host 0.0.0.0
+
+# Notebook no hotspot do celular, com a VPN da Mauá: recebe e repassa para a VM
+python -m mover.ingestao.rodar_ingestao --repassar http://<IP da VM>:8000/ingestao/sensorlogger
+```
+
+O repasse roda em segundo plano (fila de 120 mensagens, descarta as mais antigas se a VM cair) e o
+seu andamento aparece em `GET /saude` do notebook. Sem VM, `rodar_ingestao --gemeo` liga o
+estimador no próprio notebook (precisa de numpy).
+
+Fator de tempo real do CARLA (na VM, com o CarlaUE4 aberto): diz se o horizonte do gêmeo cabe no
+ciclo de 1 s.
+
+```bash
+python -m mover.simulacao.benchmark_tempo_real --horizonte 10 --repeticoes 5
+```
+
 ## Testes
 
 ```bash
-python -m pytest tests -q     # a partir da raiz do projeto: 46 testes, sem CARLA, sem LLM e sem navegador
+python -m pytest tests -q     # a partir da raiz do projeto: 51 testes, sem CARLA, sem LLM e sem navegador
 ```
 
 ## Limitações conhecidas
