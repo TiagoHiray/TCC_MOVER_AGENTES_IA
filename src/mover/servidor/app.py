@@ -1,13 +1,14 @@
-"""Aplicação FastAPI da camada agêntica (uma sessão por vez) e da interface de 4 painéis.
+"""Aplicação FastAPI do gêmeo digital (uma sessão por vez) e da interface de 4 painéis.
 
-Rotas da camada agêntica:
+Rotas da corrida autônoma (quem chama é o piloto, mover.autonomo.dirigir):
     GET    /saude                 -> {"ok": true, "sessao": {...} | null}
-    POST   /sessao                -> cria a sessão e analisa o bloco 0 (corpo: injetar_eventos, provedor, modelo, sem_ml)
+    POST   /sessao                -> abre a sessão (corpo: modo, voltas, simulador, provedor, modelo, linha_de_base...)
     GET    /sessao                -> dados da sessão atual
-    POST   /sessao/blocos/{k}     -> o caminhão entrou no bloco k: espera a análise, publica e libera o k+1 (409 fora de ordem)
-    POST   /sessao/estado         -> pose do caminhão (sim_time, x, y, yaw...); vira mensagem "estado" com a telemetria
+    POST   /sessao/telemetria     -> lote de linhas de telemetria medida ({"linhas": [...]}); vira mensagem "telemetria"
+    POST   /sessao/decisoes       -> uma decisão da camada agêntica (entrada "intervencao"); vira "entrada" e "previsao"
     GET    /sessao/log?desde=N    -> entradas publicadas a partir da N-ésima
-    DELETE /sessao                -> encerra a sessão e devolve o resumo
+    DELETE /sessao                -> encerra a sessão (corpo opcional: {"resumo": {...}} do piloto) e devolve o resumo
+    GET    /benchmark/ultimo      -> resumo do benchmark mais recente (data/benchmark/<id>/resumo.json)
     WS     /ws                    -> histórico ao conectar e, depois, as mensagens ao vivo (ver sessao.py)
 
 Rotas da interface (página, câmera do CARLA, cena 2D e chat): ver mover/interface/rotas.py.
@@ -16,51 +17,79 @@ Rotas da interface (página, câmera do CARLA, cena 2D e chat): ver mover/interf
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
 
-import pandas as pd
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from mover.agentes.supervisor import Supervisor
 from mover.config import caminho, carregar_yaml
 from mover.interface.rotas import instalar_interface
-from mover.servidor.sessao import (BlocoForaDeOrdem, BlocoInvalido, Difusor, OpcoesSessao, SessaoAgentes, SessaoEncerrada,
-                                   para_json)
+from mover.servidor.sessao import Difusor, OpcoesSessao, SessaoAutonoma, SessaoEncerrada, para_json
 
 log = logging.getLogger("mover.servidor")
 
 
 class OpcoesSessaoModelo(BaseModel):
-    injetar_eventos: bool = False
+    modo: str = Field("agentes", pattern="^(agentes|bruto)$")
+    voltas: int = Field(1, ge=1, le=1000)
+    simulador: str = "substituto"
     provedor: str | None = None
     modelo: str | None = None
-    sem_ml: bool = False
+    llm_decisoes: str | None = None
     fator_tempo: float = 1.0
     tempo_real: bool = True
+    duracao_bloco_s: float = 10.0
+    comprimento_volta_m: float = 0.0
+    duracao_prevista_s: float = 0.0
+    linha_de_base: dict[str, Any] | None = None
+    combustivel: str = "diesel"
+    preco_r_l: float = 6.0
+    co2_kg_l: float = 2.68
+    logs_medidos: bool = True
 
 
-class EstadoModelo(BaseModel):
-    """Pose enviada pelo replay; campos extras (x, y, yaw, z, correcao_m...) são repassados."""
+class LoteModelo(BaseModel):
+    linhas: list[dict[str, Any]]
+
+
+class DecisaoModelo(BaseModel):
+    """Entrada da decisão (Decisao.para_entrada()); os campos extras são guardados como vieram."""
 
     model_config = ConfigDict(extra="allow")
-    sim_time: float
+    tipo: str = "intervencao"
+    texto: str
+    opcao: str
+
+
+def ultimo_benchmark(pasta: Path) -> dict[str, Any] | None:
+    resumos = sorted(pasta.glob("*/resumo.json"), key=lambda p: p.stat().st_mtime) if pasta.exists() else []
+    if not resumos:
+        return None
+    with resumos[-1].open(encoding="utf-8") as f:
+        dados = json.load(f)
+    dados["pasta"] = str(resumos[-1].parent)
+    return dados
 
 
 def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str, Any] | None = None,
-              telemetria: pd.DataFrame | None = None,
               fabrica_supervisor: Callable[[OpcoesSessao], Supervisor] | None = None,
-              sem_ml: bool = False, fabrica_llm_chat: Callable[[OpcoesSessao | None], Any] | None = None) -> FastAPI:
-    """Monta o app. `telemetria`, `fabrica_supervisor`, `sem_ml` e `fabrica_llm_chat` existem para os testes."""
+              fabrica_llm_chat: Callable[[Any], Any] | None = None, cfg_autonomo: dict[str, Any] | None = None) -> FastAPI:
+    """Monta o app. `fabrica_supervisor` e `fabrica_llm_chat` existem para os testes."""
     cfg_agentes = cfg_agentes or carregar_yaml("config/agentes.yaml")
-    cfg_simulacao = cfg_simulacao or (carregar_yaml("config/simulacao.yaml") if caminho("config/simulacao.yaml").exists() else {})
-    pasta_sessoes = caminho(cfg_simulacao.get("servidor", {}).get("pasta_sessoes", "data/agentes/sessoes"))
+    cfg_simulacao = cfg_simulacao if cfg_simulacao is not None else (
+        carregar_yaml("config/simulacao.yaml") if caminho("config/simulacao.yaml").exists() else {})
+    cfg_autonomo = cfg_autonomo if cfg_autonomo is not None else (
+        carregar_yaml("config/autonomo.yaml") if caminho("config/autonomo.yaml").exists() else {})
+    pasta_sessoes = caminho(cfg_simulacao.get("servidor", {}).get("pasta_sessoes", "data/autonomo/sessoes"))
+    pasta_benchmark = caminho((cfg_autonomo.get("benchmark") or {}).get("pasta", "data/benchmark"))
     difusor = Difusor()
-    estado: dict[str, SessaoAgentes | None] = {"sessao": None}
+    estado: dict[str, SessaoAutonoma | None] = {"sessao": None}
     trava_sessao = asyncio.Lock()
 
     @asynccontextmanager
@@ -69,15 +98,15 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
         yield
         sessao = estado["sessao"]
         if sessao is not None and not sessao.encerrada:
-            await asyncio.to_thread(sessao.encerrar)
+            await asyncio.to_thread(sessao.encerrar, None, 5.0)
 
-    app = FastAPI(title="MOVER - camada agêntica", version="1.0", lifespan=ciclo_de_vida)
+    app = FastAPI(title="MOVER - gêmeo digital do caminhão autônomo", version="2.0", lifespan=ciclo_de_vida)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     app.state.difusor = difusor
     app.state.estado = estado
-    instalar_interface(app, estado, cfg_agentes, cfg_simulacao, fabrica_llm_chat)
+    instalar_interface(app, estado, cfg_agentes, cfg_simulacao, fabrica_llm_chat, cfg_autonomo)
 
-    def sessao_atual() -> SessaoAgentes:
+    def sessao_atual() -> SessaoAutonoma:
         sessao = estado["sessao"]
         if sessao is None:
             raise HTTPException(404, "nenhuma sessão; crie uma com POST /sessao")
@@ -94,48 +123,41 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
             anterior = estado["sessao"]
             if anterior is not None and not anterior.encerrada:
                 log.info("Encerrando a sessão %s para abrir outra.", anterior.id)
-                await asyncio.to_thread(anterior.encerrar)
+                await asyncio.to_thread(anterior.encerrar, None, 5.0)
             op = OpcoesSessao(**opcoes.model_dump())
 
-            def montar() -> SessaoAgentes:
+            def montar() -> SessaoAutonoma:
                 supervisor = fabrica_supervisor(op) if fabrica_supervisor else None
-                sessao = SessaoAgentes(cfg_agentes, op, difusor, pasta_sessoes, telemetria=telemetria,
-                                       supervisor=supervisor, sem_ml_forcado=sem_ml)
-                sessao.preparar()
-                return sessao
+                return SessaoAutonoma(cfg_agentes, op, difusor, pasta_sessoes, supervisor=supervisor)
 
             sessao = await asyncio.to_thread(montar)
             estado["sessao"] = sessao
-            log.info("Sessão %s: %d blocos de %.0f s, LLM %s", sessao.id, sessao.camada.n_blocos,
-                     sessao.camada.duracao_bloco, sessao.info()["llm"])
-            # a previsão do bloco 0 (analisado antes da partida) vai junto: a página zera tudo ao trocar de sessão
+            log.info("Sessão %s: %s, %d volta(s), simulador %s, LLM das decisões %s, dos logs %s", sessao.id, op.modo,
+                     op.voltas, op.simulador, op.llm_decisoes or "-", sessao.llm_logs)
             difusor.publicar({"tipo": "sessao", "evento": "iniciada", "sessao": sessao.info(),
-                              "previsao": sessao.previsao_atual()})
+                              "linha_de_base": op.linha_de_base})
             return sessao.info()
 
     @app.get("/sessao")
     async def ver_sessao() -> dict[str, Any]:
         return sessao_atual().info()
 
-    @app.post("/sessao/blocos/{k}")
-    async def entrar_no_bloco(k: int) -> dict[str, Any]:
+    @app.post("/sessao/telemetria", status_code=204)
+    async def receber_telemetria(lote: LoteModelo) -> None:
         sessao = sessao_atual()
         try:
-            resultado = await asyncio.to_thread(sessao.entrar_no_bloco, k)
-        except BlocoInvalido as erro:
-            raise HTTPException(404, {"mensagem": str(erro)}) from None
-        except BlocoForaDeOrdem as erro:
-            raise HTTPException(409, {"mensagem": str(erro), "proximo_bloco": erro.esperado}) from None
+            sessao.receber_telemetria(lote.linhas)
         except SessaoEncerrada as erro:
             raise HTTPException(409, {"mensagem": str(erro)}) from None
-        return para_json({"bloco": k, "entradas": resultado.entradas, "espera_s": round(resultado.espera_s, 3),
-                          "latencia_s": round(resultado.latencia_s, 3), "proximo_bloco": sessao.proximo_bloco})
 
-    @app.post("/sessao/estado", status_code=204)
-    async def receber_estado(estado_caminhao: EstadoModelo) -> None:
+    @app.post("/sessao/decisoes")
+    async def receber_decisao(decisao: DecisaoModelo) -> dict[str, Any]:
         sessao = sessao_atual()
-        extra = {k: v for k, v in estado_caminhao.model_dump().items() if k != "sim_time"}
-        difusor.publicar({"tipo": "estado", **sessao.estado(estado_caminhao.sim_time, extra)})
+        try:
+            entrada = sessao.receber_decisao(decisao.model_dump())
+        except SessaoEncerrada as erro:
+            raise HTTPException(409, {"mensagem": str(erro)}) from None
+        return {"id": entrada["id"]}
 
     @app.get("/sessao/log")
     async def ver_log(desde: int = 0) -> dict[str, Any]:
@@ -143,10 +165,17 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
         return {"sessao": sessao.id, "total": len(sessao.entradas), "entradas": sessao.entradas[max(0, desde):]}
 
     @app.delete("/sessao")
-    async def encerrar_sessao() -> dict[str, Any]:
+    async def encerrar_sessao(corpo: dict[str, Any] | None = Body(None)) -> dict[str, Any]:
         sessao = sessao_atual()
-        resumo = await asyncio.to_thread(sessao.encerrar)
+        resumo = await asyncio.to_thread(sessao.encerrar, (corpo or {}).get("resumo"))
         return {"sessao": sessao.info(), "resumo": resumo}
+
+    @app.get("/benchmark/ultimo")
+    async def benchmark() -> dict[str, Any]:
+        dados = await asyncio.to_thread(ultimo_benchmark, pasta_benchmark)
+        if dados is None:
+            raise HTTPException(404, {"mensagem": "nenhum benchmark ainda; rode python -m mover.autonomo.benchmark"})
+        return para_json(dados)
 
     @app.websocket("/ws")
     async def websocket(ws: WebSocket) -> None:
@@ -154,8 +183,8 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
         fila = difusor.inscrever()
         try:
             sessao = estado["sessao"]
-            historico = sessao.historico() if sessao else {"sessao": None, "entradas": [], "blocos": [],
-                                                           "telemetria": None, "previsao": None, "estado": None}
+            historico = sessao.historico() if sessao else {"sessao": None, "entradas": [], "serie": None, "previsao": None,
+                                                           "estado": None, "metricas": None, "linha_de_base": None}
             await ws.send_json({"tipo": "historico", **historico})
 
             async def enviar() -> None:
@@ -185,4 +214,4 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
     return app
 
 
-__all__ = ["criar_app", "Path"]
+__all__ = ["criar_app", "ultimo_benchmark"]

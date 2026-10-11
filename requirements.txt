@@ -1,0 +1,50 @@
+# Dependências do gêmeo digital MOVER.
+#
+#   py -3.12 -m venv env_carla && env_carla\Scripts\pip install -r requirements.txt   (Windows)
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt               (Linux)
+#
+# Use o Python 3.12 (o mesmo do env_carla do time): o cliente do CARLA 0.9.16 do PyPI existe para o
+# Python 3.10, 3.11 e 3.12, no Windows e no Linux (x86-64). Em outro Python ele é pulado, e só o
+# simulador substituto (--sem-carla) funciona.
+#
+# Versões testadas (Python 3.13): numpy 2.5, pandas 3.0, scipy 1.18, scikit-learn 1.9, langgraph 1.2,
+# fastapi 0.142, uvicorn 0.54, httpx 0.28, pillow 12.3, pydantic 2.13, imageio-ffmpeg 0.6, pytest 9.1.
+
+# Cliente do simulador CARLA: tem que ser a mesma versão do simulador (0.9.16). Outra forma de
+# instalar é o arquivo que vem com o simulador:
+#   pip install C:\CARLA_0.9.16\PythonAPI\carla\dist\carla-0.9.16-cp312-cp312-win_amd64.whl
+carla==0.9.16; python_version >= "3.10" and python_version < "3.13" and (sys_platform == "win32" or sys_platform == "linux")
+
+# Tratamento dos dados do Sensor Logger e plano de missão
+numpy>=1.26
+pandas>=2.2
+scipy>=1.11
+matplotlib>=3.8          # figuras (validação, alinhamento, plano de missão, benchmark)
+pyyaml>=6.0
+
+# Camada agêntica (decisões, logs e chat)
+langgraph>=0.2
+pydantic>=2.6
+scikit-learn>=1.4        # especialista de ML da análise offline (IsolationForest)
+joblib>=1.3
+python-dotenv>=1.0       # provedor e modelo do LLM pelo .env
+
+# Provedores de LLM: instale só o que for usar (o padrão é o Ollama local com gemma2:2b)
+ollama>=0.3
+# langchain-openai>=0.2  # MOVER_LLM_PROVEDOR=openai (precisa de OPENAI_API_KEY)
+# google-genai>=1.0      # MOVER_LLM_PROVEDOR=gemini (precisa de GOOGLE_API_KEY ou GEMINI_API_KEY)
+
+# Servidor e página de 4 painéis
+fastapi>=0.110
+uvicorn[standard]>=0.29  # inclui o suporte a WebSocket
+httpx>=0.27
+pillow>=10.0             # JPEG da câmera do CARLA e HUD do vídeo
+
+# Vídeo MP4 (H.264): traz o próprio ffmpeg, também no Windows
+imageio-ffmpeg>=0.5
+
+# Opcional: confere a projeção do mapa contra o PROJ nos testes
+# pyproj>=3.6
+
+# Testes
+pytest>=8.0

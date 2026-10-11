@@ -8,7 +8,7 @@ analisado antes da partida (`preparar`).
 Uma única thread de trabalho garante que os blocos sejam processados em ordem, porque a
 camada agêntica guarda memória entre blocos (mesclagem de trechos estáveis).
 
-O mesmo executor é usado pelo rodar_agentes.py (com ou sem tempo real) e pelo replay no CARLA.
+Usado pela análise offline de uma corrida (rodar_agentes.py, com ou sem tempo real).
 O servidor também passa `ao_analisar`, chamado assim que a análise de um bloco termina (antes de
 o caminhão entrar nele): é assim que a interface mostra o próximo bloco como previsão.
 """
@@ -99,7 +99,7 @@ class ExecutorBlocos:
 
         Sem tempo real, o "caminhão" entra no bloco seguinte assim que o atual é publicado
         (útil para gerar o log rapidamente). Em tempo real, cada bloco dura duracao_bloco_s /
-        fator_tempo segundos de relógio, como no replay.
+        fator_tempo segundos de relógio, como numa corrida ao vivo.
         """
         self.avisar_atrasos = tempo_real
         self.fator_tempo = fator_tempo

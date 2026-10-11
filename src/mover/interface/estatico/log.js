@@ -1,10 +1,13 @@
 /* log.js — painel 3: o log da camada agêntica.
  *
- * Cada entrada (log ou problema) vira um item com nível, tempo, bloco, origem do texto (LLM ou
- * texto-modelo) e selo de evento sintético. Embaixo fica o cartão da previsão: o próximo bloco
- * já analisado pelos agentes (ou "em análise…"). Todo texto entra com textContent.
+ * Três tipos de entrada:
+ * - intervencao: decisão dos agentes para o trecho seguinte (opção escolhida, se veio do LLM ou da
+ *   regra, o plano que o caminhão mandou e a economia prevista);
+ * - log: o que aconteceu num trecho já percorrido (medido), em linguagem natural;
+ * - problema: um evento de jerk medido (frenagem ou arrancada brusca).
+ * Embaixo fica o cartão "próximo trecho" com a decisão mais recente. Todo texto entra com textContent.
  */
-import { NOME_NIVEL, doisDigitos, fmt, horaCurta, maiuscula, nomeProblema, tempoDaEntrada } from "./desenho.js";
+import { NOME_NIVEL, NOME_OPCAO, doisDigitos, fmt, horaCurta, maiuscula, nomeProblema, tempoDaEntrada } from "./desenho.js";
 
 function el(tag, classe, texto) {
   const elemento = document.createElement(tag);
@@ -15,14 +18,25 @@ function el(tag, classe, texto) {
 
 function seloOrigem(entrada) {
   const llm = entrada.texto_origem === "llm";
-  const selo = el("span", "selo", llm ? `LLM${entrada.provedor ? ` · ${entrada.provedor}` : ""}` : "texto-modelo");
+  const decisao = entrada.tipo === "intervencao";
+  const rotulo = llm ? `LLM${entrada.provedor ? ` · ${entrada.provedor}` : ""}` : decisao ? "regra" : "texto-modelo";
+  const selo = el("span", "selo", rotulo);
   selo.dataset.origem = llm ? "llm" : "modelo";
   selo.title = entrada.observacao
-    ? `Texto-modelo: ${entrada.observacao}`
+    ? `${decisao ? "Regra" : "Texto-modelo"}: ${entrada.observacao}`
     : llm
-      ? "Texto escrito pelo LLM do Supervisor (números conferidos pela guarda)"
-      : "Texto-modelo montado a partir dos fatos medidos";
+      ? decisao
+        ? "Opção escolhida e texto escritos pelo Supervisor (LLM local), dentro das opções seguras e com os números conferidos"
+        : "Texto escrito pelo LLM do Supervisor (números conferidos pela guarda)"
+      : decisao
+        ? "Decisão da regra (menor custo de combustível e tempo sem eventos bruscos)"
+        : "Texto-modelo montado a partir dos fatos medidos";
   return selo;
+}
+
+function nomeElementoBruto(b) {
+  const tipo = b.tipo === "frenagem_brusca" ? "frenagem brusca" : "arrancada brusca";
+  return `${tipo}${b.nome_elemento ? (b.tipo === "frenagem_brusca" ? ` para a ${b.nome_elemento}` : ` depois da ${b.nome_elemento}`) : ""}`;
 }
 
 // Uma rolagem conta como "do usuário" se vier até este tempo depois de roda, toque ou tecla.
@@ -36,18 +50,15 @@ export class PainelLog {
     this.botaoFim = botaoFim;
     this.n = 0;
     this.nProblemas = 0;
+    this.nIntervencoes = 0;
     this.resumo = null;
     this.chavePrevisao = "";
-    // Acompanha o fim da lista até o usuário rolar para cima. Só a rolagem feita pelo usuário
-    // muda este modo: a rolagem automática é suave e, no meio dela, a lista ainda não está no
-    // fim (medir a posição nessa hora desligava o acompanhamento quando chegavam várias
-    // entradas de uma vez).
+    // Acompanha o fim da lista até o usuário rolar para cima (só a rolagem do usuário muda o modo).
     this.seguir = true;
-    this.novas = 0; // entradas que chegaram enquanto o usuário lia outro trecho
-    this.pendenteFim = false; // o resumo da volta chegou enquanto o usuário lia outro trecho
+    this.novas = 0;
+    this.pendenteFim = false;
     this.ultimaAcaoUsuario = -Infinity;
     const marcar = (ev) => {
-      // pointerdown só conta na própria lista (barra de rolagem), não nos itens
       if (ev.type !== "pointerdown" || ev.target === lista) this.ultimaAcaoUsuario = performance.now();
     };
     for (const tipo of ["wheel", "touchmove", "keydown", "pointerdown"]) {
@@ -64,7 +75,8 @@ export class PainelLog {
   vazio() {
     const li = el("li", "log-vazio");
     li.id = "log-vazio";
-    li.append(el("strong", null, "O log aparece aqui."), el("span", null, " Cada bloco de 10 s é publicado quando o caminhão entra nele."));
+    li.append(el("strong", null, "O log aparece aqui."),
+      el("span", null, " Os agentes decidem cada trecho de 10 s antes de o caminhão chegar nele e registram o que aconteceu."));
     this.lista.append(li);
   }
 
@@ -72,7 +84,9 @@ export class PainelLog {
     this.lista.replaceChildren();
     this.n = 0;
     this.nProblemas = 0;
+    this.nIntervencoes = 0;
     this.resumo = null;
+    this.chavePrevisao = "";
     this.vazio();
     this.atualizarContagem();
     this.definirSeguir(true);
@@ -80,7 +94,8 @@ export class PainelLog {
 
   atualizarContagem() {
     this.contagem.textContent = this.n
-      ? `${this.n} entrada${this.n > 1 ? "s" : ""} · ${this.nProblemas} problema${this.nProblemas === 1 ? "" : "s"}`
+      ? `${this.n} entrada${this.n > 1 ? "s" : ""} · ${this.nIntervencoes} decis${this.nIntervencoes === 1 ? "ão" : "ões"} · ` +
+        `${this.nProblemas} problema${this.nProblemas === 1 ? "" : "s"}`
       : "";
   }
 
@@ -120,6 +135,7 @@ export class PainelLog {
     else this.lista.append(item);
     this.n += 1;
     if (entrada.tipo === "problema") this.nProblemas += 1;
+    if (entrada.tipo === "intervencao") this.nIntervencoes += 1;
     this.atualizarContagem();
     if (!rolar) return;
     if (this.seguir) {
@@ -138,14 +154,45 @@ export class PainelLog {
     li.tabIndex = -1;
 
     const cab = el("div", "entrada-cab");
-    const nivel = el("span", "selo-nivel", e.tipo === "problema" ? NOME_NIVEL[e.nivel] : "log");
+    const rotulo = e.tipo === "problema" ? NOME_NIVEL[e.nivel] : e.tipo === "intervencao" ? "decisão" : "log";
+    const nivel = el("span", "selo-nivel", rotulo);
     nivel.dataset.nivel = e.nivel;
     nivel.dataset.tipo = e.tipo;
-    cab.append(nivel, el("span", "entrada-tempo", tempoDaEntrada(e)), el("span", "entrada-bloco", `bloco ${doisDigitos(e.bloco)}`));
+    cab.append(nivel, el("span", "entrada-tempo", tempoDaEntrada(e)));
+    if (e.tipo === "intervencao") {
+      cab.append(el("span", "entrada-bloco", `para ${fmt(e.t_ini, 0)}–${fmt(e.t_fim, 0)} s`));
+    } else {
+      cab.append(el("span", "entrada-bloco", `bloco ${doisDigitos(e.bloco)}`));
+    }
     cab.append(el("span", "entrada-id", `#${e.id}`));
     li.append(cab);
 
-    if (e.tipo === "problema") {
+    if (e.tipo === "intervencao") {
+      const f = e.fatos || {};
+      const ativa = e.opcao && e.opcao !== "nenhuma";
+      li.dataset.ativa = ativa ? "1" : "0";
+      const titulo = el("p", "entrada-titulo");
+      titulo.append(document.createTextNode(ativa ? "Alteração " : ""));
+      const opcao = el("span", "opcao", NOME_OPCAO[e.opcao] || e.opcao);
+      opcao.dataset.opcao = e.opcao;
+      titulo.append(opcao);
+      if (e.brutas?.length) titulo.append(document.createTextNode(` · em vez de ${nomeElementoBruto(e.brutas[0])}`));
+      li.append(titulo, el("p", "entrada-texto", e.texto));
+      if (e.brutas?.length) {
+        const numeros = el("div", "comparacao");
+        const item = (rotuloItem, antes, depois, classe) => {
+          const span = el("span", `comp ${classe || ""}`);
+          span.append(el("small", null, rotuloItem), el("b", null, `${antes} → ${depois}`));
+          numeros.append(span);
+        };
+        item("desaceleração", `${fmt(f.desacel_bruta_mps2)}`, `${fmt(f.desacel_escolhida_mps2)} m/s²`);
+        item("eventos bruscos", `${f.eventos_brutos ?? "—"}`, `${f.eventos_escolhidos ?? "—"}`);
+        item("diesel previsto", `${fmt(f.combustivel_bruto_ml, 0)}`, `${fmt(f.combustivel_escolhido_ml, 0)} mL`,
+          (f.economia_prevista_ml ?? 0) > 0 ? "ganho" : "");
+        item("tempo", "", `${(f.tempo_extra_s ?? 0) >= 0 ? "+" : ""}${fmt(f.tempo_extra_s)} s`);
+        li.append(numeros);
+      }
+    } else if (e.tipo === "problema") {
       const f = e.fatos || {};
       li.append(el("p", "entrada-titulo", `${maiuscula(nomeProblema(e))} · jerk ${fmt(f.jerk_max_abs_mps3)} m/s³ a ${fmt(f.vel_kmh, 0)} km/h`));
       li.append(el("p", "entrada-texto", e.diagnostico || e.texto));
@@ -160,100 +207,97 @@ export class PainelLog {
 
     const rodape = el("div", "entrada-rodape");
     rodape.append(seloOrigem(e));
-    if (e.fonte && e.fonte !== "real") {
-      const sintetico = el("span", "selo selo-sintetico", "evento sintético");
-      sintetico.title = "Trecho com evento injetado por --injetar-eventos (a pose continua a real)";
-      rodape.append(sintetico);
+    if (e.tipo === "intervencao") {
+      if (e.recomendada && e.recomendada !== e.opcao) {
+        const troca = el("span", "selo", `regra: ${NOME_OPCAO[e.recomendada] || e.recomendada}`);
+        troca.title = "O Supervisor (LLM) trocou a opção recomendada pela regra";
+        rodape.append(troca);
+      }
+      const atrasadas = (e.aplicacao || []).filter((a) => !a.a_tempo).length;
+      if (atrasadas) {
+        const atraso = el("span", "selo selo-atraso", `${atrasadas} elemento(s) sem tempo de aplicar`);
+        atraso.title = "A decisão chegou depois de o piloto começar a frenagem para o elemento";
+        rodape.append(atraso);
+      }
+      if (e.latencia_s !== undefined) rodape.append(el("span", "entrada-hora", `${fmt(e.latencia_s, 1)} s`));
+    } else {
+      if (e.fonte === "substituto") {
+        const selo = el("span", "selo", "simulador substituto");
+        selo.title = "Medido no simulador substituto (sem o CARLA)";
+        rodape.append(selo);
+      }
+      if (e.continuacao) rodape.append(el("span", "selo", "continuação"));
+      const hora = horaCurta(e.hora_local);
+      if (hora) rodape.append(el("span", "entrada-hora", hora));
     }
-    if (e.continuacao) rodape.append(el("span", "selo", "continuação"));
-    if ((e.detectado_por || []).includes("especialista_ml")) {
-      const ml = el("span", "selo", "ML: trecho atípico");
-      ml.title = "O IsolationForest marcou quadros atípicos nesta janela";
-      rodape.append(ml);
-    }
-    const hora = horaCurta(e.hora_local);
-    if (hora) rodape.append(el("span", "entrada-hora", hora));
     li.append(rodape);
     return li;
   }
 
   /**
-   * info: { estado: "sem-sessao" | "analisando" | "pronta" | "ultimo" | "encerrada",
-   *         bloco, t_ini, t_fim, n_entradas, n_problemas, latencia_s, problemas: [entradas] }
+   * info: { estado: "sem-sessao" | "aguardando" | "pronta" | "encerrada", previsao, modo }
    */
   definirPrevisao(info) {
-    const chave = JSON.stringify([info.estado, info.bloco, info.n_entradas, (info.problemas || []).map((p) => p.id)]);
+    const p = info.previsao;
+    const chave = JSON.stringify([info.estado, info.modo, p?.id]);
     if (chave === this.chavePrevisao) return;
     this.chavePrevisao = chave;
     const c = this.cartao;
     c.replaceChildren();
     c.dataset.estado = info.estado;
     c.hidden = info.estado === "encerrada";
-    const trecho = info.bloco !== undefined && info.bloco !== null
-      ? `bloco ${doisDigitos(info.bloco)} (${fmt(info.t_ini, 0)}–${fmt(info.t_fim, 0)} s)`
-      : "";
-
     const cab = el("div", "previsao-cab");
-    const titulo = el("span", "previsao-titulo", "Previsão");
-    cab.append(titulo);
+    cab.append(el("span", "previsao-titulo", "Próximo trecho"));
     if (info.estado === "sem-sessao") {
-      cab.append(el("span", "previsao-detalhe", "sem volta em andamento"));
-      c.append(cab, el("p", "previsao-texto", "Rode o replay (python -m mover.simulacao.replay_carla) para a camada agêntica começar."));
+      cab.append(el("span", "previsao-detalhe", "sem corrida em andamento"));
+      c.append(cab, el("p", "previsao-texto", "Rode o piloto (python -m mover.autonomo.dirigir) para o caminhão sair."));
       return;
     }
-    if (info.estado === "ultimo") {
-      cab.append(el("span", "previsao-detalhe", "último bloco"));
-      c.append(cab, el("p", "previsao-texto", "O caminhão está no último bloco: não há trecho adiante para analisar."));
+    if (info.modo === "bruto") {
+      cab.append(el("span", "previsao-detalhe", "corrida sem agentes"));
+      c.append(cab, el("p", "previsao-texto", "Corrida de comparação: o caminhão segue o próprio plano, sem alterações."));
       return;
     }
-    if (info.estado === "analisando") {
-      cab.append(el("span", "previsao-detalhe", trecho));
-      const texto = el("p", "previsao-texto previsao-analisando", "Os agentes estão analisando o próximo bloco");
+    if (info.estado === "aguardando" || !p) {
+      const texto = el("p", "previsao-texto previsao-analisando", "Os agentes estão analisando o trecho seguinte");
       texto.append(el("span", "reticencias"));
       c.append(cab, texto, el("div", "barra-analise"));
       return;
     }
-    // pronta
-    cab.append(el("span", "previsao-detalhe", `${trecho} · analisado em ${fmt(info.latencia_s, 1)} s`));
-    const n = info.n_entradas || 0;
-    const np = info.n_problemas || 0;
-    const resumo = el("p", "previsao-texto",
-      `${n} ${n === 1 ? "entrada pronta" : "entradas prontas"} para quando o caminhão chegar; ` +
-      (np ? `${np} problema${np === 1 ? "" : "s"} previsto${np === 1 ? "" : "s"}:` : "nenhum problema previsto."));
-    c.append(cab, resumo);
-    if (np) {
-      const lista = el("ul", "previsao-lista");
-      for (const p of info.problemas) {
-        const li = el("li", "previsao-item");
-        li.id = `previsao-${p.id}`;
-        li.dataset.nivel = p.nivel;
-        li.tabIndex = -1;
-        const nivel = el("span", "selo-nivel", NOME_NIVEL[p.nivel]);
-        nivel.dataset.nivel = p.nivel;
-        nivel.dataset.tipo = "problema";
-        const f = p.fatos || {};
-        li.append(nivel, el("span", "previsao-item-texto",
-          `${maiuscula(nomeProblema(p))} · pico aos ${fmt(p.t_pico)} s · jerk ${fmt(f.jerk_max_abs_mps3)} m/s³`),
-          el("span", "entrada-id", `#${p.id}`));
-        lista.append(li);
-      }
-      c.append(lista);
-    }
+    const origem = p.texto_origem === "llm" ? "LLM" : "regra";
+    cab.append(el("span", "previsao-detalhe", `${fmt(p.t_ini, 0)}–${fmt(p.t_fim, 0)} s · ${NOME_OPCAO[p.opcao] || p.opcao} (${origem})`));
+    c.append(cab);
+    const f = p.fatos || {};
+    const elementos = (p.instancias || []).map((i) => i.nome).filter(Boolean);
+    const linha = el("p", "previsao-texto");
+    linha.textContent = (elementos.length ? `${elementos.slice(0, 4).join(", ")}: ` : "") +
+      (p.brutas?.length
+        ? `o caminhão planeja ${nomeElementoBruto(p.brutas[0])} (${fmt(p.brutas[0].acel_mps2)} m/s²); ` +
+          `com a alteração, ` +
+          `${f.eventos_escolhidos ?? 0} evento(s) e ${fmt(f.economia_prevista_ml, 0)} mL a menos.`
+        : "sem decisões bruscas previstas.");
+    c.append(linha);
+    const legenda = el("div", "previsao-legenda");
+    legenda.append(el("span", "leg-bruto", "plano do caminhão"), el("span", "leg-escolhido", "com a alteração"));
+    c.append(legenda);
   }
 
-  /** Cartão de fim de volta, no fim da lista. */
+  /** Cartão de fim de corrida, no fim da lista. */
   definirResumo(r) {
     this.resumo?.remove();
     const li = el("li", "resumo-volta");
-    li.append(el("strong", null, "Volta concluída"));
+    li.append(el("strong", null, "Corrida concluída"));
+    const m = r.metricas || {};
     const niveis = r.problemas_por_nivel || {};
-    const textos = r.texto_origem || {};
+    const origem = r.decisoes_por_origem || {};
     const partes = [
-      `${r.entradas} entradas em ${r.blocos_publicados} blocos`,
-      `${r.problemas} problema${r.problemas === 1 ? "" : "s"} (${niveis.critico || 0} crítico${(niveis.critico || 0) === 1 ? "" : "s"}, ${niveis.atencao || 0} de atenção)`,
-      `textos: ${textos.llm || 0} do LLM, ${textos.modelo || 0} texto-modelo`,
+      `${r.decisoes ?? 0} decisões (${origem.llm || 0} do LLM, ${origem.regra || 0} da regra)`,
+      `${r.problemas ?? 0} problema${r.problemas === 1 ? "" : "s"} medido${r.problemas === 1 ? "" : "s"} (${niveis.critico || 0} crítico${(niveis.critico || 0) === 1 ? "" : "s"})`,
     ];
-    if (r.maior_espera_s !== undefined) partes.push(`maior espera pela análise: ${fmt(r.maior_espera_s, 2)} s`);
+    if (m.combustivel_ml !== undefined) partes.push(`${fmt(m.combustivel_ml, 0)} mL de diesel (R$ ${fmt(m.custo_r, 2)})`);
+    if (m.economia_medida_ml !== null && m.economia_medida_ml !== undefined) {
+      partes.push(`${fmt(m.economia_medida_ml, 0)} mL a menos que o plano sem agentes (previsto)`);
+    }
     li.append(el("span", null, partes.join(" · ")));
     document.getElementById("log-vazio")?.remove();
     this.lista.append(li);
@@ -266,15 +310,12 @@ export class PainelLog {
     }
   }
 
-  /** Rola até a entrada (ou o item da previsão) e a destaca por um instante. */
+  /** Rola até a entrada e a destaca por um instante. */
   destacar(id) {
-    const naLista = document.getElementById(`entrada-${id}`);
-    const alvo = naLista || document.getElementById(`previsao-${id}`);
+    const alvo = document.getElementById(`entrada-${id}`);
     if (!alvo) return false;
-    // Quem pediu para ver uma entrada antiga não deve ser levado de volta ao fim pela próxima
-    // entrada; o botão "↓ entradas novas" aparece no lugar.
-    const fimAlvo = naLista ? naLista.offsetTop + naLista.offsetHeight : 0;
-    if (naLista && this.lista.scrollHeight - fimAlvo > this.lista.clientHeight) this.definirSeguir(false);
+    const fimAlvo = alvo.offsetTop + alvo.offsetHeight;
+    if (this.lista.scrollHeight - fimAlvo > this.lista.clientHeight) this.definirSeguir(false);
     alvo.scrollIntoView({ behavior: "smooth", block: "nearest" });
     alvo.classList.remove("destaque");
     void alvo.offsetWidth; // reinicia a animação

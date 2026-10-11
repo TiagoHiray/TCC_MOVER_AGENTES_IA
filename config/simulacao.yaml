@@ -1,19 +1,24 @@
 # =============================================================================
-# Simulação: replay da volta gravada no CARLA 0.9.16 (gêmeo digital)
+# Simulação no CARLA 0.9.16: mapa do campus, caminhão, câmeras e servidor do painel.
+# Quem dirige é o piloto automático do CARLA (config/autonomo.yaml). A rota e o plano de missão
+# saem só do mapa (gerar_missao); as seções telemetria e alinhamento são legado.
 # Caminhos relativos são resolvidos a partir da raiz do repositório.
 # =============================================================================
 
 mapa:
   # Mapa do campus feito pelo Eduardo (pasta mapa_imt_plano_carla do Drive), usado sem alterações.
-  # Outro mapa: python -m mover.simulacao.replay_carla --mapa caminho/do/mapa.xodr
+  # Outro mapa: python -m mover.autonomo.dirigir --mapa caminho/do/mapa.xodr
   arquivo: data/mapas/mapa_final.xodr
   passo_m: 0.5                     # amostragem dos centros de faixa usada no alinhamento
   tipos_faixa: [driving, restricted, bidirectional, parking]
 
 telemetria:
-  arquivo: data/tratado/telemetria_tratada.csv   # poses da volta (Etapa 1)
+  # LEGADO (fora do fluxo do gêmeo digital): a gravação tratada do Sensor Logger, usada só pelo
+  # verificar_mapa. O plano de missão e os dados de base não dependem dela.
+  arquivo: data/tratado/telemetria_tratada.csv
 
 alinhamento:
+  # LEGADO: casamento da gravação do Sensor Logger com o mapa (verificar_mapa).
   peso_rumo_m: 3.0                 # custo de casar com uma via perpendicular, em metros
   icp:                             # ajuste rígido fino depois da georreferência
     ativo: true
@@ -47,14 +52,14 @@ carla:
     smooth_junctions: true
     enable_mesh_visibility: true
     enable_pedestrian_navigation: true
-  clima_da_gravacao: true          # nuvens, chuva e altura do sol do CSV tratado
 
 veiculo:
-  blueprint: vehicle.carlamotors.firetruck   # o mesmo do coleta_carla.py
+  blueprint: vehicle.carlamotors.european_hgv
   role_name: mover_gemeo
-  altura_extra_m: 0.05             # acima do asfalto; a física fica desligada e a pose é imposta
+  # com física: quem dirige é o Traffic Manager (porta e clima em config/autonomo.yaml, seção carla)
 
 camera:
+  # Câmera da janela do CARLA (spectator): segue o caminhão para você vê-lo andando.
   modo: perseguicao                # perseguicao | cima | livre
   distancia_m: 16
   altura_m: 8
@@ -74,14 +79,7 @@ camera_painel:
   inclinacao_graus: -15
   qualidade_jpeg: 70               # 1-95
 
-replay:
-  fator_tempo: 1.0                 # 2 = duas vezes mais rápido que o tempo real
-  estado_a_cada_ticks: 4           # envia a pose ao servidor a 5 Hz
-  marcar_problemas: true           # escreve na pista os problemas do bloco que vai começar
-  vida_marcas_s: 12
-
 servidor:
   host: 127.0.0.1
   porta: 8000
-  pasta_sessoes: data/agentes/sessoes
-  timeout_bloco_s: 300             # quanto o replay espera a análise de um bloco
+  pasta_sessoes: data/autonomo/sessoes   # log de cada corrida (JSONL) e o resumo

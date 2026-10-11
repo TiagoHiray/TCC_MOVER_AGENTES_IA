@@ -1,23 +1,25 @@
 """Chat sobre o log (painel 4): perguntas do operador respondidas a partir das entradas da camada agêntica.
 
 Contexto enviado ao LLM (o mesmo provedor plugável dos agentes: .env > config/agentes.yaml):
-- as entradas publicadas até o bloco atual, com os números (fatos) de cada janela;
-- as entradas do próximo bloco, se a análise dele já terminou, marcadas como PREVISÃO (o caminhão
-  ainda não passou por ali).
-Para caber no contexto de modelos pequenos (gemma2:2b), entram todos os problemas, as entradas do
-trecho citado na pergunta e as mais recentes, até `chat.max_entradas_contexto`.
+- as entradas publicadas até agora: intervenções (decisões dos agentes para o trecho seguinte, com
+  a economia prevista), logs dos trechos percorridos e problemas medidos (eventos de jerk);
+- as métricas ao vivo: combustível, custo, CO2 e a comparação com o caminhão sem agentes.
+Para caber no contexto de modelos pequenos (gemma2:2b), entram todos os problemas, as intervenções
+recentes, as entradas do trecho citado na pergunta e as mais recentes, até `chat.max_entradas_contexto`.
 
 A resposta deve ser curta e citar as entradas no formato (#id, tempo). Antes de ir para a tela, uma
-guarda local confere se cada número citado aparece no contexto (fatos, tempos, ids) ou na pergunta,
-e se os ids citados existem. Se a guarda recusar, ou se o LLM falhar, vale a resposta determinística,
-montada por palavras-chave sobre o log. A guarda não é um revisor: ela só barra números e citações
-sem respaldo, não confere o sentido da frase. O provedor "falso" usa sempre a resposta determinística.
+guarda local confere se cada número citado aparece no contexto (fatos, tempos, ids, métricas) ou na
+pergunta, e se os ids citados existem. Se a guarda recusar, ou se o LLM falhar, vale a resposta
+determinística, montada por palavras-chave sobre o log. A guarda não é um revisor: ela só barra
+números e citações sem respaldo, não confere o sentido da frase. O provedor "falso" usa sempre a
+resposta determinística.
 """
 
 from __future__ import annotations
 
 import copy
 import logging
+import math
 import re
 import threading
 import time
@@ -46,13 +48,15 @@ PADRAO_CHAT: dict[str, Any] = {
 }
 
 SISTEMA_CHAT = (
-    "Você é o assistente do operador no projeto MOVER, o gêmeo digital de um caminhão. Você responde "
-    "perguntas sobre o log de condução escrito pela camada agêntica.\n"
+    "Você é o assistente do operador no projeto MOVER, o gêmeo digital de um caminhão autônomo que dá a volta "
+    "no campus do IMT. A camada agêntica prevê as decisões bruscas do piloto automático e intervém (suaviza "
+    "frenagens e arrancadas); ela também registra o que aconteceu. Você responde perguntas sobre esse log.\n"
     "Regras:\n"
     "- Português do Brasil, no máximo {max_palavras} palavras.\n"
-    "- Use só as entradas do log abaixo. Se a resposta não estiver nelas, diga que o log não tem essa informação.\n"
+    "- Use só as entradas do log e as métricas abaixo. Se a resposta não estiver nelas, diga que o log não tem essa informação.\n"
     "- Cite as entradas usadas no formato (#id, tempo), por exemplo (#12, 51,4 s).\n"
-    "- Entradas marcadas PREVISÃO são do próximo bloco, que o caminhão ainda não percorreu: apresente-as como previsão.\n"
+    "- Intervenções são decisões para o trecho seguinte: o caminhão manda o plano dele (o que vai fazer nos próximos "
+    "10 s, ainda não executado), e o efeito da alteração é uma previsão.\n"
     "- Não invente números, causas nem peças. Velocidades sem casas decimais; acelerações e jerk com uma casa.\n"
     '- Responda somente com JSON no formato {{"resposta": "...", "citacoes": [ids das entradas citadas]}}.'
 )
@@ -68,26 +72,31 @@ class RespostaChat(BaseModel):
 # ---------------------------------------------------------------------------------------------
 @dataclass
 class ContextoChat:
-    """O que o chat sabe num instante: o log publicado e, se pronta, a previsão do próximo bloco."""
+    """O que o chat sabe num instante: o log publicado e as métricas da corrida."""
 
     publicadas: list[dict[str, Any]]            # todas as entradas publicadas
     selecionadas: list[dict[str, Any]]          # as que vão para o prompt do LLM
-    previsao: list[dict[str, Any]] = field(default_factory=list)
-    bloco_previsao: dict[str, Any] | None = None
+    metricas: dict[str, Any] = field(default_factory=dict)
     t_atual: float | None = None
     bloco_atual: int | None = None
-    n_blocos: int = 0
     duracao_bloco: float = 10.0
     t0: float = 0.0
     encerrada: bool = False
+    modo: str = "agentes"
+    combustivel: str = "diesel"
+    fonte_base: str = "previsto"                # o plano sem agentes, previsto pelo modelo do caminhão
 
     @property
     def todas(self) -> list[dict[str, Any]]:
-        return self.publicadas + self.previsao
+        return self.publicadas
+
+    @property
+    def intervencoes(self) -> list[dict[str, Any]]:
+        return [e for e in self.publicadas if e["tipo"] == "intervencao"]
 
     def por_id(self) -> dict[int, tuple[dict[str, Any], bool]]:
-        """id -> (entrada, é previsão)."""
-        return {**{e["id"]: (e, False) for e in self.publicadas}, **{e["id"]: (e, True) for e in self.previsao}}
+        """id -> (entrada, é previsão). Intervenções são previsões do trecho seguinte."""
+        return {e["id"]: (e, e["tipo"] == "intervencao") for e in self.publicadas}
 
 
 def sem_acentos(texto: str) -> str:
@@ -129,6 +138,8 @@ def no_trecho(entrada: dict[str, Any], trecho: tuple[float, float]) -> bool:
 def tempo_da_entrada(entrada: dict[str, Any]) -> str:
     if entrada["tipo"] == "problema":
         return f"{num(entrada['t_pico'])} s"
+    if entrada["tipo"] == "intervencao":
+        return f"{num(entrada.get('t_pedido') or entrada['t_ini'])} s"
     return f"{num(entrada['t_ini'])}–{num(entrada['t_fim'])} s"
 
 
@@ -142,19 +153,29 @@ def nome_problema(entrada: dict[str, Any], conhecimento: dict[str, Any]) -> str:
     return conhecimento.get(entrada.get("evento") or "", {}).get("nome", str(entrada.get("evento", "evento")).replace("_", " "))
 
 
-def linha_do_contexto(entrada: dict[str, Any], previsao: bool, conhecimento: dict[str, Any]) -> str:
-    """Uma entrada do log no prompt do chat: cabeçalho, texto publicado e os números da janela."""
+def _origem(entrada: dict[str, Any]) -> str:
+    return "LLM" if entrada.get("texto_origem") == "llm" else "regra"
+
+
+def linha_do_contexto(entrada: dict[str, Any], conhecimento: dict[str, Any]) -> str:
+    """Uma entrada do log no prompt do chat: cabeçalho, texto publicado e os números."""
     f = entrada.get("fatos") or {}
-    marca = "PREVISÃO " if previsao else ""
-    sintetico = " [evento sintético]" if entrada.get("fonte") not in (None, "real") else ""
     nivel = NOMES_NIVEL.get(entrada["nivel"], entrada["nivel"])
-    if entrada["tipo"] == "problema":
-        cabecalho = f"{marca}#{entrada['id']} [bloco {entrada['bloco']:02d}, pico aos {num(entrada['t_pico'])} s, problema {nivel}]"
+    if entrada["tipo"] == "intervencao":
+        cabecalho = (f"#{entrada['id']} [decidida aos {num(entrada.get('t_pedido') or entrada['t_ini'])} s para "
+                     f"{num(entrada['t_ini'], 0)}–{num(entrada['t_fim'], 0)} s, intervenção {entrada.get('acao')} "
+                     f"({_origem(entrada)})]")
+        fatos = (f"plano do caminhão: {num(f.get('combustivel_bruto_ml', 0), 0)} mL, {f.get('eventos_brutos', 0)} eventos bruscos, "
+                 f"desaceleração até {num(f.get('desacel_bruta_mps2', 0))} m/s²; com a intervenção: "
+                 f"{num(f.get('combustivel_escolhido_ml', 0), 0)} mL, {f.get('eventos_escolhidos', 0)} eventos, até "
+                 f"{num(f.get('desacel_escolhida_mps2', 0))} m/s²; economia prevista {num(f.get('economia_prevista_ml', 0), 0)} mL "
+                 f"({num(f.get('economia_prevista_pct', 0), 0)} %), tempo extra {num(f.get('tempo_extra_s', 0))} s")
+    elif entrada["tipo"] == "problema":
+        cabecalho = f"#{entrada['id']} [bloco {entrada['bloco']:02d}, pico aos {num(entrada['t_pico'])} s, problema {nivel}]"
         fatos = (f"{nome_problema(entrada, conhecimento)}; jerk máx {num(f.get('jerk_max_abs_mps3', 0))} m/s³; "
-                 f"velocidade {num(f.get('vel_kmh', 0), 0)} km/h; impacto vertical {num(f.get('acel_vert_max_abs_mps2', 0))} m/s²; "
-                 f"causa: {NOMES_CAUSA.get(f.get('causa', ''), f.get('causa', ''))}")
+                 f"velocidade {num(f.get('vel_kmh', 0), 0)} km/h; causa: {NOMES_CAUSA.get(f.get('causa', ''), f.get('causa', ''))}")
     else:
-        cabecalho = (f"{marca}#{entrada['id']} [bloco {entrada['bloco']:02d}, {num(entrada['t_ini'])}–{num(entrada['t_fim'])} s, "
+        cabecalho = (f"#{entrada['id']} [bloco {entrada['bloco']:02d}, {num(entrada['t_ini'])}–{num(entrada['t_fim'])} s, "
                      f"log {nivel}]")
         giro = abs(int(f.get("mudanca_rumo_graus", 0)))
         rumo = "trajeto reto" if f.get("lado", "reto") == "reto" else f"virou {giro}° à {f['lado']}"
@@ -162,28 +183,53 @@ def linha_do_contexto(entrada: dict[str, Any], previsao: bool, conhecimento: dic
                  f"máx {num(f.get('vel_max_kmh', 0), 0)}); aceleração longitudinal {num(f.get('acel_long_min_mps2', 0))} a "
                  f"{num(f.get('acel_long_max_mps2', 0))} m/s²; jerk {num(f.get('jerk_long_min_mps3', 0))} a "
                  f"{num(f.get('jerk_long_max_mps3', 0))} m/s³; {rumo}")
-    return f"{cabecalho}{sintetico} {entrada['texto']} Fatos: {fatos}."
+    return f"{cabecalho} {entrada['texto']} Fatos: {fatos}."
+
+
+def fonte_da_linha_de_base(linha: dict[str, Any] | None) -> str:
+    """De onde vem o consumo sem agentes (hoje, sempre a previsão do plano sem alterações)."""
+    return str((linha or {}).get("fonte_curta") or "previsto")
+
+
+def quem_compara(fonte_base: str = "previsto") -> str:
+    """Quem dá o consumo sem agentes: o plano do caminhão sem alterações, previsto pelo modelo."""
+    return "o plano sem agentes previa"
+
+
+def linha_das_metricas(m: dict[str, Any], combustivel: str = "diesel", fonte_base: str = "previsto") -> str:
+    if not m:
+        return "Métricas: ainda sem telemetria."
+    partes = [f"Métricas até agora: {num(m.get('tempo_s', 0))} s, {num(m.get('distancia_m', 0), 0)} m, "
+              f"{num(m.get('combustivel_ml', 0), 0)} mL de {combustivel} (R$ {num(m.get('custo_r', 0), 2)}, "
+              f"{num(m.get('co2_g', 0) / 1000.0, 2)} kg de CO2)"]
+    if m.get("base_combustivel_ml") is not None:
+        partes.append(f"sem agentes, {quem_compara(fonte_base)} {num(m['base_combustivel_ml'], 0)} mL na mesma distância "
+                      f"(economia de {num(m.get('economia_medida_ml') or 0, 0)} mL, {num(m.get('economia_medida_pct') or 0, 0)} %)")
+    partes.append(f"{m.get('decisoes', 0)} decisões ({m.get('decisoes_llm', 0)} do LLM), economia prevista somada "
+                  f"{num(m.get('economia_prevista_ml', 0), 0)} mL; {m.get('problemas_medidos', 0)} problemas medidos")
+    return "; ".join(partes) + "."
 
 
 # ---------------------------------------------------------------------------------------------
 # Resposta determinística (provedor falso, LLM fora do ar ou recusado pela guarda)
 # ---------------------------------------------------------------------------------------------
 CHAVES_PREVISAO = ("previs", "proxim", "adiante", "a frente", "pela frente", "vem ai", "vai acontecer", "futuro", "seguinte")
+CHAVES_ECONOMIA = ("economi", "combust", "gasolin", "diesel", "custo", "gast", "consum", "litro", "reais", "co2", "carbono",
+                   "dinheiro", "100 voltas")
+CHAVES_INTERVENCAO = ("interv", "suaviz", "decis", "decid", "agente", "opcao", "llm", "mudou", "corrig")
 CHAVES_PROBLEMA = ("problema", "critic", "atenc", "alerta", "evento", "lombada", "irregular", "fren", "frei", "arranc",
                    "brusc", "jerk", "tranco", "perig", "risco")
 CHAVES_VELOCIDADE = ("velocidade", "veloc", "km/h", "rapid", "devagar", "lent")
 CHAVES_CURVA = ("curva", "virou", "vira", "rumo", "esquerda", "direita")
 
 
-def _filtrar_problemas(problemas: list[tuple[dict[str, Any], bool]], texto: str) -> tuple[list[tuple[dict[str, Any], bool]], str]:
+def _filtrar_problemas(problemas: list[dict[str, Any]], texto: str) -> tuple[list[dict[str, Any]], str]:
     """Filtra por nível e tipo citados na pergunta; devolve também a descrição do filtro."""
     filtros: list[tuple[str, Callable[[dict[str, Any]], bool]]] = []
     if "critic" in texto:
         filtros.append(("crítico", lambda e: e["nivel"] == "critico"))
     elif "atenc" in texto:
         filtros.append(("de atenção", lambda e: e["nivel"] == "atencao"))
-    # frenagem e arrancada são do motorista: as prováveis lombadas (causa na via) ficam de fora, mesmo que o
-    # pico de jerk tenha a forma de uma soltura de freio
     conducao = lambda eventos: lambda e: e.get("evento") in eventos and e.get("causa") != "irregularidade_via"  # noqa: E731
     if _tem(texto, ("lombada", "irregular", "buraco")):
         filtros.append(("de lombada", lambda e: e.get("causa") == "irregularidade_via"))
@@ -192,7 +238,7 @@ def _filtrar_problemas(problemas: list[tuple[dict[str, Any], bool]], texto: str)
     elif _tem(texto, ("arranc", "acelerou")):
         filtros.append(("de arrancada", conducao(("arrancada_brusca", "corte_aceleracao"))))
     for _, filtro in filtros:
-        problemas = [(e, p) for e, p in problemas if filtro(e)]
+        problemas = [e for e in problemas if filtro(e)]
     return problemas, " ".join(d for d, _ in filtros)
 
 
@@ -217,64 +263,86 @@ def _niveis_no_cabecalho(problemas: list[dict[str, Any]]) -> str:
     return " (" + ", ".join(f"{niveis[nivel]} {nome(nivel, niveis[nivel])}" for nivel in ordem) + ")"
 
 
+def _resumo_intervencao(e: dict[str, Any]) -> str:
+    f = e.get("fatos") or {}
+    bruta = (e.get("brutas") or [{}])[0]
+    alvo = f" para a {bruta['nome_elemento']}" if bruta.get("nome_elemento") else ""
+    tipo = "frenagem brusca" if bruta.get("tipo") == "frenagem_brusca" else "arrancada brusca"
+    if e.get("opcao") == "nenhuma" or not bruta:
+        return f"sem intervenção no trecho de {num(e['t_ini'], 0)}–{num(e['t_fim'], 0)} s {citacao(e)}"
+    return (f"intervenção {e.get('acao')} ({_origem(e)}) no lugar da {tipo}{alvo} ({num(bruta.get('acel_mps2', 0))} m/s²), "
+            f"economia prevista de {num(f.get('economia_prevista_ml', 0), 0)} mL {citacao(e)}")
+
+
 def resposta_deterministica(pergunta: str, ctx: ContextoChat | None, conhecimento: dict[str, Any]) -> tuple[str, list[int]]:
     """Resposta curta por palavras-chave sobre o log, com as citações (#id, tempo)."""
     if ctx is None:
-        return "Ainda não há volta em andamento. Inicie o replay para o log começar.", []
+        return "Ainda não há corrida em andamento. Rode o piloto (python -m mover.autonomo.dirigir) para o log começar.", []
     texto = sem_acentos(pergunta)
     trecho = filtro_de_tempo(pergunta, ctx.t0, ctx.duracao_bloco)
     no_pedido = (lambda e: no_trecho(e, trecho)) if trecho else (lambda e: True)  # noqa: E731
     sufixo = f" entre {num(trecho[0])} e {num(trecho[1])} s" if trecho else ""
+    intervencoes = [e for e in ctx.intervencoes if no_pedido(e)]
 
     if _tem(texto, CHAVES_PREVISAO):
         if ctx.encerrada:
-            return "A volta terminou: não há próximo bloco para prever.", []
-        if not ctx.previsao:
-            return "O próximo bloco ainda está em análise; a previsão aparece assim que os agentes terminarem.", []
-        bp = ctx.bloco_previsao
-        partes = [f"Previsão para o bloco {bp['bloco']:02d} ({num(bp['t_ini'], 0)}–{num(bp['t_fim'], 0)} s), ainda não percorrido:"]
-        problemas = [e for e in ctx.previsao if e["tipo"] == "problema"]
-        logs = [e for e in ctx.previsao if e["tipo"] == "log"]
-        if problemas:
-            partes += [f"{nome_problema(e, conhecimento)} ({NOMES_NIVEL[e['nivel']]}) {citacao(e)}." for e in problemas[:3]]
-        else:
-            partes.append("nenhum problema previsto.")
-        if logs:
-            partes.append(f"{logs[0]['texto']} {citacao(logs[0])}")
-        citadas = problemas[:3] + logs[:1]
+            return "A corrida terminou: não há trecho adiante para prever.", []
+        if not ctx.intervencoes:
+            return "Os agentes ainda não decidiram o próximo trecho.", []
+        e = ctx.intervencoes[-1]
+        return f"Próximo trecho ({num(e['t_ini'], 0)}–{num(e['t_fim'], 0)} s): {e['texto']} {citacao(e)}", [e["id"]]
+
+    if _tem(texto, CHAVES_ECONOMIA):
+        m = ctx.metricas or {}
+        if not m:
+            return "Ainda não há telemetria para medir o consumo.", []
+        partes = [f"Até agora o caminhão gastou {num(m.get('combustivel_ml', 0), 0)} mL de {ctx.combustivel} "
+                  f"(R$ {num(m.get('custo_r', 0), 2)}) em {num(m.get('distancia_m', 0), 0)} m."]
+        if m.get("base_combustivel_ml") is not None and ctx.modo == "agentes":
+            partes.append(f"Sem os agentes, {quem_compara(ctx.fonte_base)} {num(m['base_combustivel_ml'], 0)} mL na mesma distância: "
+                          f"economia de {num(m.get('economia_medida_ml') or 0, 0)} mL ({num(m.get('economia_medida_pct') or 0, 0)} %).")
+        if m.get("decisoes"):
+            partes.append(f"As {m['decisoes']} decisões previram {num(m.get('economia_prevista_ml', 0), 0)} mL de economia.")
+        partes.append("O comparativo medido em várias voltas sai do benchmark.")
+        citadas = ctx.intervencoes[-1:]
+        if citadas:
+            partes.append(f"Última decisão {citacao(citadas[0])}.")
         return " ".join(partes), [e["id"] for e in citadas]
 
+    if _tem(texto, CHAVES_INTERVENCAO) and not _tem(texto, ("problema", "critic", "atenc")):
+        if not intervencoes:
+            return f"Nenhuma intervenção dos agentes{sufixo} até agora.", []
+        ativas = [e for e in intervencoes if e.get("opcao") not in (None, "nenhuma")]
+        por_opcao = Counter(e.get("acao") for e in ativas)
+        cabeca = (f"{len(intervencoes)} decisão(ões){sufixo}, {len(ativas)} com intervenção"
+                  + (f" ({', '.join(f'{n} {op}' for op, n in por_opcao.most_common())})" if por_opcao else ""))
+        ultimas = (ativas or intervencoes)[-2:]
+        return f"{cabeca}. Últimas: " + "; ".join(_resumo_intervencao(e) for e in ultimas) + ".", [e["id"] for e in ultimas]
+
     if not ctx.publicadas:
-        return "O log ainda está vazio: o caminhão não entrou no primeiro bloco.", []
+        return "O log ainda está vazio: o caminhão acabou de partir.", []
 
     if _tem(texto, CHAVES_PROBLEMA):
-        todos = [(e, False) for e in ctx.publicadas if e["tipo"] == "problema" and no_pedido(e)]
-        todos += [(e, True) for e in ctx.previsao if e["tipo"] == "problema" and no_pedido(e)]
+        todos = [e for e in ctx.publicadas if e["tipo"] == "problema" and no_pedido(e)]
         escolhidos, filtro = _filtrar_problemas(todos, texto)
         descricao = f"problema{' ' + filtro if filtro else ''}"
         if not escolhidos:
-            return f"Nenhum {descricao} no log até agora{sufixo}.", []
-        # só cabem 3 na resposta: críticos primeiro, depois o que já aconteceu antes da previsão, e por fim o tempo
-        escolhidos.sort(key=lambda par: (-ORDEM_NIVEL.get(par[0]["nivel"], 0), par[1], float(par[0]["t_pico"])))
-        publicados = [e for e, previsto in escolhidos if not previsto]
-        n_prev = len(escolhidos) - len(publicados)
-        if publicados:
-            filtrou_nivel = "critic" in texto or "atenc" in texto
-            cabeca = (f"{len(publicados)} {descricao if len(publicados) == 1 else _plural_problema(descricao)} no log{sufixo}"
-                      f"{'' if filtrou_nivel else _niveis_no_cabecalho(publicados)}")
-            if n_prev:
-                cabeca += f", mais {n_prev} na previsão do próximo bloco"
-        else:
-            cabeca = f"Nenhum {descricao} no log até agora{sufixo}; {n_prev} na previsão do próximo bloco"
+            evitados = sum(int((e.get("fatos") or {}).get("eventos_brutos", 0) or 0) for e in intervencoes
+                           if e.get("opcao") not in (None, "nenhuma"))
+            extra = (f" Os agentes alteraram o plano antes de {evitados} evento(s) brusco(s) que o caminhão tinha planejado."
+                     if evitados and not filtro else "")
+            return f"Nenhum {descricao} medido{sufixo}.{extra}", [e["id"] for e in intervencoes[-1:]] if extra else []
+        escolhidos.sort(key=lambda e: (-ORDEM_NIVEL.get(e["nivel"], 0), float(e["t_pico"])))
+        filtrou_nivel = "critic" in texto or "atenc" in texto
+        cabeca = (f"{len(escolhidos)} {descricao if len(escolhidos) == 1 else _plural_problema(descricao)} medido(s){sufixo}"
+                  f"{'' if filtrou_nivel else _niveis_no_cabecalho(escolhidos)}")
         itens = []
-        for e, previsto in escolhidos[:3]:
+        for e in escolhidos[:3]:
             f = e.get("fatos") or {}
-            marcas = [NOMES_NIVEL[e["nivel"]]] + (["previsão"] if previsto else []) + (
-                ["sintético"] if e.get("fonte") not in (None, "real") else [])
-            itens.append(f"{nome_problema(e, conhecimento)} ({', '.join(marcas)}), "
+            itens.append(f"{nome_problema(e, conhecimento)} ({NOMES_NIVEL[e['nivel']]}), "
                          f"jerk de {num(f.get('jerk_max_abs_mps3', 0))} m/s³ a {num(f.get('vel_kmh', 0), 0)} km/h {citacao(e)}")
         resto = f"; e mais {len(escolhidos) - 3}" if len(escolhidos) > 3 else ""
-        return f"{cabeca}: " + "; ".join(itens) + resto + ".", [e["id"] for e, _ in escolhidos[:3]]
+        return f"{cabeca}: " + "; ".join(itens) + resto + ".", [e["id"] for e in escolhidos[:3]]
 
     logs = [e for e in ctx.publicadas if e["tipo"] == "log" and no_pedido(e) and e.get("fatos")]
     if _tem(texto, CHAVES_VELOCIDADE) and logs:
@@ -294,23 +362,17 @@ def resposta_deterministica(pergunta: str, ctx: ContextoChat | None, conheciment
     if trecho:
         do_trecho = [e for e in ctx.publicadas if no_trecho(e, trecho)]
         if not do_trecho:
-            return f"O log não tem entradas{sufixo} (até agora vai até {num(ctx.publicadas[-1].get('t_fim') or 0, 0)} s).", []
+            return f"O log não tem entradas{sufixo}.", []
         itens = [f"{maiuscula(e['texto'])} {citacao(e)}" for e in do_trecho[:3]]
         return f"No log{sufixo}: " + " ".join(itens), [e["id"] for e in do_trecho[:3]]
 
     problemas = [e for e in ctx.publicadas if e["tipo"] == "problema"]
     niveis = Counter(e["nivel"] for e in problemas)
-    ultimo = next((e for e in reversed(ctx.publicadas) if e["tipo"] == "log"), ctx.publicadas[-1])
-    blocos = len({e["bloco"] for e in ctx.publicadas})
-    resposta = (f"Até agora: {len(ctx.publicadas)} entradas em {blocos} bloco(s), {len(problemas)} problema(s) "
-                f"({niveis.get('critico', 0)} crítico(s), {niveis.get('atencao', 0)} de atenção). "
-                f"Último trecho: {ultimo['texto']} {citacao(ultimo)}")
-    citadas = [ultimo["id"]]
-    previstos = [e for e in ctx.previsao if e["tipo"] == "problema"]
-    if previstos:
-        resposta += f" Previsão do próximo bloco: {len(previstos)} problema(s), o primeiro {citacao(previstos[0])}."
-        citadas.append(previstos[0]["id"])
-    return resposta, citadas
+    ultimo = ctx.publicadas[-1]
+    resposta = (f"Até agora: {len(ctx.publicadas)} entradas, {len(ctx.intervencoes)} decisões dos agentes e "
+                f"{len(problemas)} problema(s) medido(s) ({niveis.get('critico', 0)} crítico(s), "
+                f"{niveis.get('atencao', 0)} de atenção). Última entrada: {ultimo['texto']} {citacao(ultimo)}")
+    return resposta, [ultimo["id"]]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -324,10 +386,9 @@ class ServicoChat:
         self.cfg = {**PADRAO_CHAT, **(cfg_agentes.get("chat") or {})}
         self.conhecimento = cfg_agentes.get("conhecimento", {})
         jerk = cfg_agentes.get("limiares", {}).get("jerk", {})
-        vertical = cfg_agentes.get("limiares", {}).get("lombada", {})
         # limiares que a resposta pode citar; a chave diz a unidade (ver supervisor.unidade_da_chave)
         self._numeros_fixos = {"atencao_mps3": jerk.get("atencao_mps3"), "critico_mps3": jerk.get("critico_mps3"),
-                               "acel_vertical_mps2": vertical.get("acel_vertical_mps2"), "contagens": list(NUMEROS_LIVRES)}
+                               "contagens": list(NUMEROS_LIVRES), "voltas_comparacao": [100]}
         self._fabrica = fabrica_llm or self._llm_padrao
         self._llms: dict[tuple[Any, Any], ClienteLLM | None] = {}
         self._erros: dict[tuple[Any, Any], str] = {}
@@ -357,11 +418,11 @@ class ServicoChat:
         if sessao is None:
             return None
         publicadas = list(sessao.entradas)
-        previsao = sessao.previsao_atual()
-        camada = sessao.camada
         estado = sessao.ultimo_estado or {}
-        trecho = filtro_de_tempo(pergunta, camada.t0, camada.duracao_bloco)
+        duracao = float(getattr(sessao, "duracao_bloco", 10.0))
+        trecho = filtro_de_tempo(pergunta, 0.0, duracao)
         escolhidas = {e["id"]: e for e in publicadas if e["tipo"] == "problema"}
+        escolhidas.update({e["id"]: e for e in [e for e in publicadas if e["tipo"] == "intervencao"][-4:]})
         if trecho:
             escolhidas.update({e["id"]: e for e in publicadas if no_trecho(e, trecho)})
         limite = max(int(self.cfg["max_entradas_contexto"]), len(escolhidas))
@@ -369,36 +430,32 @@ class ServicoChat:
             if len(escolhidas) >= limite:
                 break
             escolhidas.setdefault(entrada["id"], entrada)
+        t_atual = estado.get("t")
+        opcoes = getattr(sessao, "opcoes", None)
         return ContextoChat(
             publicadas=publicadas,
             selecionadas=sorted(escolhidas.values(), key=lambda e: e["id"]),
-            previsao=list(previsao["entradas"]) if previsao else [],
-            bloco_previsao=previsao,
-            t_atual=estado.get("sim_time"),
-            bloco_atual=sessao.proximo_bloco - 1 if sessao.proximo_bloco > 0 else None,
-            n_blocos=camada.n_blocos,
-            duracao_bloco=camada.duracao_bloco,
-            t0=camada.t0,
-            encerrada=sessao.encerrada,
+            metricas=sessao.metricas.para_json() if hasattr(sessao, "metricas") else {},
+            t_atual=t_atual,
+            bloco_atual=int(t_atual // duracao) if t_atual is not None else None,
+            duracao_bloco=duracao,
+            encerrada=bool(sessao.encerrada),
+            modo=getattr(opcoes, "modo", "agentes"),
+            combustivel=getattr(opcoes, "combustivel", "diesel"),
+            fonte_base=fonte_da_linha_de_base(getattr(opcoes, "linha_de_base", None)),
         )
 
     def prompt(self, ctx: ContextoChat, pergunta: str, historico: list[dict[str, str]]) -> str:
         linhas = []
+        modo = "com a camada agêntica intervindo" if ctx.modo == "agentes" else "sem agentes (o caminhão sozinho, para comparar)"
         if ctx.encerrada:
-            linhas.append("A volta terminou; o log abaixo está completo.")
+            linhas.append(f"A corrida ({modo}) terminou; o log abaixo está completo.")
         elif ctx.t_atual is not None:
-            bloco = f" (bloco {ctx.bloco_atual:02d} de {ctx.n_blocos})" if ctx.bloco_atual is not None else ""
-            linhas.append(f"Instante atual da volta: {num(ctx.t_atual)} s{bloco}.")
+            linhas.append(f"Corrida {modo}. Instante atual: {num(ctx.t_atual)} s (bloco {ctx.bloco_atual:02d}).")
+        linhas.append(linha_das_metricas(ctx.metricas, ctx.combustivel, ctx.fonte_base))
         omitidas = len(ctx.publicadas) - len(ctx.selecionadas)
-        linhas.append(f"Log publicado ({len(ctx.publicadas)} entradas" + (f"; {omitidas} antigas omitidas" if omitidas else "") + "):")
-        linhas += [linha_do_contexto(e, False, self.conhecimento) for e in ctx.selecionadas] or ["(vazio)"]
-        if ctx.previsao:
-            bp = ctx.bloco_previsao
-            linhas.append(f"PREVISÃO do bloco {bp['bloco']:02d} ({num(bp['t_ini'])}–{num(bp['t_fim'])} s), já analisado e "
-                          "ainda não percorrido:")
-            linhas += [linha_do_contexto(e, True, self.conhecimento) for e in ctx.previsao]
-        elif not ctx.encerrada:
-            linhas.append("O próximo bloco ainda está em análise (sem previsão por enquanto).")
+        linhas.append(f"Log ({len(ctx.publicadas)} entradas" + (f"; {omitidas} omitidas" if omitidas else "") + "):")
+        linhas += [linha_do_contexto(e, self.conhecimento) for e in ctx.selecionadas] or ["(vazio)"]
         rodadas = historico[-2 * int(self.cfg["rodadas_historico"]):]
         if rodadas:
             linhas.append("Conversa anterior:")
@@ -413,13 +470,23 @@ class ServicoChat:
         for e in ctx.todas:
             grupos.append(numeros_por_unidade({"id": e["id"], "bloco": e["bloco"], "t_ini": e.get("t_ini"),
                                                "t_fim": e.get("t_fim"), "t_pico": e.get("t_pico"),
-                                               "t_mesclado_desde": e.get("mesclado_desde"), "fatos": e.get("fatos")}))
+                                               "t_pedido": e.get("t_pedido"), "t_mesclado_desde": e.get("mesclado_desde"),
+                                               "fatos": e.get("fatos"), "brutas": e.get("brutas"),
+                                               "instancias": e.get("instancias")}))
             for valor, unidade in numeros_com_unidade(e.get("texto") or ""):  # o texto publicado, com a unidade escrita
                 grupos.append({unidade: [abs(valor)]})
+        m = ctx.metricas or {}
+        metricas = {"tempo_s": m.get("tempo_s"), "distancia_m": m.get("distancia_m"), "combustivel_ml": m.get("combustivel_ml"),
+                    "custo_r": m.get("custo_r"), "co2_kg": (m.get("co2_g") or 0.0) / 1000.0,
+                    "base_combustivel_ml": m.get("base_combustivel_ml"), "economia_medida_ml": m.get("economia_medida_ml"),
+                    "economia_medida_pct": m.get("economia_medida_pct"), "economia_prevista_ml": m.get("economia_prevista_ml")}
+        grupos.append(numeros_por_unidade({k: v for k, v in metricas.items() if v is not None and math.isfinite(float(v))}))
         problemas = [e for e in ctx.todas if e["tipo"] == "problema"]
-        contagens = [ctx.bloco_atual, ctx.n_blocos, len(ctx.publicadas), len(ctx.previsao), len(problemas),
-                     list(Counter(e["nivel"] for e in problemas).values()), len({e["bloco"] for e in ctx.publicadas})]
-        grupos.append(numeros_por_unidade({"t_atual": ctx.t_atual, "contagens": contagens}, self._numeros_fixos))
+        contagens = [ctx.bloco_atual, len(ctx.publicadas), len(problemas), len(ctx.intervencoes),
+                     list(Counter(e["nivel"] for e in problemas).values()), m.get("decisoes"), m.get("decisoes_llm"),
+                     m.get("intervencoes"), m.get("problemas_medidos"), m.get("base_eventos")]
+        grupos.append(numeros_por_unidade({"t_atual": ctx.t_atual, "contagens": [c for c in contagens if c is not None]},
+                                          self._numeros_fixos))
         # o que o operador escreveu pode voltar na resposta com qualquer unidade ("passou de 40?" -> "40 km/h")
         do_operador = [pergunta] + [t["texto"] for t in historico if t["papel"] == "operador"]
         grupos.append({QUALQUER_UNIDADE: [abs(v) for texto in do_operador for v in numeros_no_texto(texto)]})
@@ -478,7 +545,6 @@ class ServicoChat:
                 "observacao": observacao, "latencia_s": latencia,
                 "contexto": {"entradas": len(ctx.publicadas) if ctx else 0,
                              "no_prompt": len(ctx.selecionadas) if ctx else 0,
-                             "previsao_bloco": ctx.bloco_previsao["bloco"] if ctx and ctx.bloco_previsao else None,
                              "t_atual": ctx.t_atual if ctx else None}}
 
     @staticmethod

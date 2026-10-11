@@ -1,21 +1,22 @@
-"""Sessão da camada agêntica dentro do servidor e difusão das mensagens para os WebSockets.
+"""Sessão da corrida autônoma dentro do servidor e difusão das mensagens para os WebSockets.
 
-Uma sessão = uma volta do replay. Ela monta a camada agêntica da Etapa 2 (mesmas funções do
-rodar_agentes.py), analisa o bloco 0 antes da partida e, a cada aviso do replay de que o
-caminhão entrou no bloco k, publica o resultado do bloco k e libera o k+1 (liberação
-antecipada, ExecutorBlocos). Tudo o que é publicado vai para:
-- os WebSockets conectados (log ao vivo para a interface);
-- data/agentes/sessoes/sessao_<data>.jsonl (uma entrada por linha, como na Etapa 2).
+Uma sessão = uma corrida do caminhão autônomo (uma ou mais voltas). Quem dirige é o processo do
+piloto (mover.autonomo.dirigir): ele manda ao servidor a telemetria medida em lotes (0,5 s) e as
+decisões da camada agêntica assim que ficam prontas. O servidor:
+- guarda a telemetria e publica a série reduzida (5 Hz) para os gráficos, que se montam ao vivo;
+- publica cada decisão (alteração) no log e o bloco seguinte: o plano que o caminhão mandou x o
+  plano alterado pelos agentes;
+- roda a camada de logs (Etapa 2) sobre a telemetria medida, bloco a bloco, numa thread: o que
+  de fato aconteceu (trechos e eventos de jerk) vira log em linguagem natural;
+- mantém as métricas ao vivo (combustível, custo, CO2) e a comparação com a linha de base (o plano
+  do caminhão sem agentes, previsto pelo modelo do caminhão, na mesma distância percorrida).
 
 Mensagens do WebSocket (campo "tipo"):
-- historico: ao conectar; sessão atual, entradas e blocos já publicados, telemetria liberada,
-             previsão do próximo bloco e último estado (para a página abrir no meio da volta);
-- sessao:    evento "iniciada" ou "encerrada", com os dados da sessão (e o resumo, no fim);
-- entrada:   uma entrada nova do log (log ou problema), no formato do JSONL da Etapa 2;
-- bloco:     o caminhão entrou no bloco k (espera, latência da análise e telemetria do bloco);
-- previsao:  a análise do próximo bloco terminou; entradas e telemetria dele, que o caminhão
-             ainda não percorreu (a "previsão" mostrada na interface e usada pelo chat);
-- estado:    pose e telemetria do caminhão (~5 Hz), para o dashboard.
+- historico:  ao conectar; sessão, entradas, série já percorrida, previsão, último estado e métricas;
+- sessao:     evento "iniciada" ou "encerrada" (com o resumo no fim);
+- entrada:    uma entrada nova do log: intervencao, log ou problema;
+- telemetria: pontos novos da série (5 Hz) e o estado atual do caminhão com as métricas;
+- previsao:   a previsão da decisão mais recente (curvas e elementos do plano à frente).
 """
 
 from __future__ import annotations
@@ -24,29 +25,29 @@ import asyncio
 import json
 import logging
 import math
+import queue
 import threading
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
 
-from mover.agentes.executor import ExecutorBlocos, ResultadoBloco
 from mover.agentes.grafo import CamadaAgentica
-from mover.agentes.rodar_agentes import (aplicar_eventos_sinteticos, carregar_especialista_ml, carregar_telemetria,
-                                         criar_supervisor)
 from mover.agentes.supervisor import Supervisor
+from mover.agentes.telemetria_viva import para_agentes
 
 log = logging.getLogger("mover.servidor")
 
-# colunas da telemetria repassadas no estado do caminhão
-COLUNAS_ESTADO = ("hora_local", "speed_kmh", "acc_long", "acc_lat", "acc_vert", "jerk_long", "yaw_rate_dps",
-                  "grade_pct", "manobra", "throttle_est", "brake_est", "steer_est", "odom_m", "fonte")
-# colunas dos gráficos do dashboard (telemetria dos blocos liberados, a 5 Hz)
-COLUNAS_GRAFICO = ("speed_kmh", "acc_long")
+# série dos gráficos e do mapa (5 Hz)
+COLUNAS_SERIE = ("t", "speed_kmh", "acc_long", "v_desejada_kmh", "v_limite_kmh", "x", "y", "rumo_graus", "d", "combustivel_ml")
+# colunas do estado atual do caminhão
+COLUNAS_ESTADO = ("t", "x", "y", "rumo_graus", "speed_kmh", "acc_long", "v_desejada_kmh", "v_limite_kmh", "v_alvo_kmh",
+                  "d", "s", "volta", "bloco", "modo_tick", "limitado_por", "throttle", "brake", "steer",
+                  "combustivel_ml", "custo_r", "co2_g", "fonte", "modo", "hora_local")
+PASSO_SERIE_S = 0.2
 
 
 def para_json(valor: Any) -> Any:
@@ -110,55 +111,91 @@ class Difusor:
 
 @dataclass
 class OpcoesSessao:
-    injetar_eventos: bool = False
-    provedor: str | None = None
+    modo: str = "agentes"                  # agentes | bruto (o caminhão sem alterações, para comparar)
+    voltas: int = 1
+    simulador: str = "substituto"          # carla | substituto
+    provedor: str | None = None            # LLM dos logs e do chat (padrão: .env ou YAML)
     modelo: str | None = None
-    sem_ml: bool = False
-    fator_tempo: float = 1.0   # velocidade do replay (2 = duas vezes mais rápido), para os avisos de atraso
-    tempo_real: bool = True    # False com --sem-espera: o caminhão não segue o relógio e esperar é normal
-
-
-class BlocoForaDeOrdem(Exception):
-    def __init__(self, esperado: int, recebido: int):
-        super().__init__(f"bloco {recebido} fora de ordem; o próximo é o {esperado}")
-        self.esperado, self.recebido = esperado, recebido
-
-
-class BlocoInvalido(Exception):
-    pass
+    llm_decisoes: str | None = None        # nome do LLM das decisões, informado pelo piloto
+    fator_tempo: float = 1.0
+    tempo_real: bool = True
+    duracao_bloco_s: float = 10.0
+    comprimento_volta_m: float = 0.0
+    duracao_prevista_s: float = 0.0
+    linha_de_base: dict[str, Any] | None = None
+    combustivel: str = "diesel"
+    preco_r_l: float = 6.0
+    co2_kg_l: float = 2.68
+    logs_medidos: bool = True              # roda a camada de logs sobre a telemetria medida
 
 
 class SessaoEncerrada(Exception):
     pass
 
 
-class SessaoAgentes:
-    """Uma volta do replay: camada agêntica + executor de blocos + log publicado."""
+@dataclass
+class Metricas:
+    tempo_s: float = 0.0
+    distancia_m: float = 0.0
+    combustivel_ml: float = 0.0
+    custo_r: float = 0.0
+    co2_g: float = 0.0
+    economia_prevista_ml: float = 0.0       # soma da economia prevista pelas decisões (plano alterado x plano do caminhão)
+    decisoes: int = 0
+    decisoes_llm: int = 0
+    intervencoes: int = 0                   # decisões com opção diferente de "nenhuma"
+    problemas_medidos: int = 0
+    base_combustivel_ml: float | None = None  # linha de base (plano sem agentes, previsto) na mesma distância
+    base_eventos: int | None = None
+    economia_medida_ml: float | None = None
+    economia_medida_pct: float | None = None
+    latencias_llm_s: list[float] = field(default_factory=list)
+
+    def para_json(self) -> dict[str, Any]:
+        dados = asdict(self)
+        lat = dados.pop("latencias_llm_s")
+        dados["latencia_llm_media_s"] = round(float(np.mean(lat)), 2) if lat else None
+        return para_json({k: (round(v, 3) if isinstance(v, float) else v) for k, v in dados.items()})
+
+
+class SessaoAutonoma:
+    """Uma corrida do caminhão autônomo: telemetria, decisões, logs medidos e métricas."""
 
     def __init__(self, cfg_agentes: dict[str, Any], opcoes: OpcoesSessao, difusor: Difusor, pasta_sessoes: Path,
-                 telemetria: pd.DataFrame | None = None, supervisor: Supervisor | None = None, sem_ml_forcado: bool = False):
+                 supervisor: Supervisor | None = None):
         self.cfg = cfg_agentes
         self.opcoes = opcoes
         self.difusor = difusor
-        if telemetria is None:
-            telemetria = carregar_telemetria(cfg_agentes, None, opcoes.injetar_eventos)
-        elif opcoes.injetar_eventos:
-            telemetria = aplicar_eventos_sinteticos(cfg_agentes, telemetria)
-        self.telemetria = telemetria.reset_index(drop=True)
-        self.supervisor = supervisor or criar_supervisor(cfg_agentes, opcoes.provedor, opcoes.modelo)
-        ml = carregar_especialista_ml(cfg_agentes, opcoes.sem_ml or sem_ml_forcado)
-        self.camada = CamadaAgentica(cfg_agentes, self.telemetria, self.supervisor, ml)
+        self.duracao_bloco = float(opcoes.duracao_bloco_s)
+        self.linhas: list[dict[str, Any]] = []
+        self.serie: dict[str, list[Any]] = {c: [] for c in COLUNAS_SERIE}
         self.entradas: list[dict[str, Any]] = []
-        self.blocos: list[dict[str, Any]] = []
-        self.proximo_bloco = 0
+        self.previsao: dict[str, Any] | None = None
+        self.ultimo_estado: dict[str, Any] | None = None
+        self.metricas = Metricas()
         self.encerrada = False
-        self.previsao: dict[str, Any] | None = None       # próximo bloco já analisado e ainda não publicado
-        self.ultimo_estado: dict[str, Any] | None = None  # última pose recebida do replay
-        self._trava = threading.Lock()
-        self._trava_previsao = threading.Lock()
-        self._t = self.telemetria["sim_time"].to_numpy(float)
-        self.executor = ExecutorBlocos(self.camada, ao_publicar=self._ao_publicar, ao_analisar=self._ao_analisar,
-                                       avisar_atrasos=opcoes.tempo_real, fator_tempo=max(float(opcoes.fator_tempo), 1e-6))
+        self.resumo_piloto: dict[str, Any] | None = None
+        self._proximo_id = 1
+        self._t_serie = -math.inf
+        self._a_suave = 0.0
+        self._trava = threading.RLock()
+        self._base = opcoes.linha_de_base
+        self.supervisor = supervisor
+        self.camada: CamadaAgentica | None = None
+        if opcoes.logs_medidos:
+            if self.supervisor is None:
+                from mover.agentes.rodar_agentes import criar_supervisor
+
+                self.supervisor = criar_supervisor(cfg_agentes, opcoes.provedor, opcoes.modelo)
+            self.camada = CamadaAgentica(cfg_agentes, None, self.supervisor, None, t0=0.0)
+        self.margem_s = float(cfg_agentes.get("blocos", {}).get("margem_eventos_s", 2.0))
+        self.taxa_hz = float(cfg_agentes.get("entrada", {}).get("taxa_hz", 20))
+        self._blocos_pedidos = 0          # blocos já mandados para a camada de logs
+        self._fila_logs: queue.Queue = queue.Queue()
+        self._thread_logs: threading.Thread | None = None
+        if self.camada is not None:
+            self._thread_logs = threading.Thread(target=self._laco_logs, name="logs-medidos", daemon=True)
+            self._thread_logs.start()
         self.criada_em = datetime.now()
         pasta_sessoes.mkdir(parents=True, exist_ok=True)
         base = self.criada_em.strftime("%Y%m%d_%H%M%S")
@@ -170,144 +207,213 @@ class SessaoAgentes:
         self._arquivo = self.arquivo.open("w", encoding="utf-8")
 
     # ------------------------------------------------------------------ informações
-    def info(self) -> dict[str, Any]:
+    @property
+    def llm_logs(self) -> str:
         llm = getattr(self.supervisor, "llm", None)
-        previsao = self.previsao
-        return {
+        return getattr(llm, "nome", None) or "texto-modelo"
+
+    def info(self) -> dict[str, Any]:
+        op = self.opcoes
+        return para_json({
             "id": self.id,
-            "n_blocos": self.camada.n_blocos,
-            "duracao_bloco_s": self.camada.duracao_bloco,
-            "t0": self.camada.t0,
-            "duracao_volta_s": round(float(self._t[-1] - self._t[0] + 1.0 / self.camada.taxa_hz), 2),
-            "taxa_hz": self.camada.taxa_hz,
-            "injetar_eventos": self.opcoes.injetar_eventos,
-            "fator_tempo": self.opcoes.fator_tempo,
-            "tempo_real": self.opcoes.tempo_real,
-            "llm": getattr(llm, "nome", None) or "texto-modelo",
-            "provedor": self.opcoes.provedor,
-            "modelo": self.opcoes.modelo,
-            "especialista_ml": self.camada.especialista_ml is not None,
-            "proximo_bloco": self.proximo_bloco,
-            "previsao_bloco": previsao["bloco"] if previsao else None,
+            "modo": op.modo,
+            "voltas": op.voltas,
+            "simulador": op.simulador,
+            "duracao_bloco_s": self.duracao_bloco,
+            "comprimento_volta_m": op.comprimento_volta_m,
+            "distancia_total_m": op.comprimento_volta_m * op.voltas,
+            "duracao_prevista_s": op.duracao_prevista_s,
+            "fator_tempo": op.fator_tempo,
+            "tempo_real": op.tempo_real,
+            "llm": op.llm_decisoes or self.llm_logs,
+            "llm_decisoes": op.llm_decisoes,
+            "llm_logs": self.llm_logs,
+            "provedor": op.provedor,
+            "modelo": op.modelo,
+            "combustivel": op.combustivel,
+            "preco_r_l": op.preco_r_l,
+            "co2_kg_l": op.co2_kg_l,
+            "tem_linha_de_base": self._base is not None,
             "n_entradas": len(self.entradas),
             "encerrada": self.encerrada,
             "arquivo": str(self.arquivo),
-        }
+        })
 
     def previsao_atual(self) -> dict[str, Any] | None:
-        with self._trava_previsao:
+        with self._trava:
             return self.previsao
 
-    def telemetria_resumida(self, t_ini: float, t_fim: float, passo: int = 4) -> dict[str, list[float | None]]:
-        """Telemetria de [t_ini, t_fim) para os gráficos: média de cada `passo` quadros (5 Hz a 20 Hz)."""
-        sel = np.flatnonzero((self._t >= t_ini - 1e-6) & (self._t < t_fim - 1e-6))
-        if sel.size == 0:
-            return {"t": [], **{c: [] for c in COLUNAS_GRAFICO if c in self.telemetria}}
-        grupo = np.arange(sel.size) // max(1, int(passo))
-        contagem = np.bincount(grupo)
-
-        def media(valores: np.ndarray) -> list[float | None]:
-            return para_json(np.round(np.bincount(grupo, weights=valores) / contagem, 2).tolist())
-
-        saida = {"t": media(self._t[sel])}
-        for coluna in COLUNAS_GRAFICO:
-            if coluna in self.telemetria:
-                saida[coluna] = media(self.telemetria[coluna].to_numpy(float)[sel])
-        return saida
-
     def historico(self) -> dict[str, Any]:
-        """Tudo o que uma página que conecta no meio da volta precisa para se montar."""
-        fim = self.blocos[-1]["t_fim"] if self.blocos else self.camada.t0
-        return para_json({"sessao": self.info(), "entradas": list(self.entradas), "blocos": list(self.blocos),
-                          "telemetria": self.telemetria_resumida(self.camada.t0, fim),
-                          "previsao": self.previsao_atual(), "estado": self.ultimo_estado})
-
-    # ------------------------------------------------------------------ ciclo de vida
-    def preparar(self) -> None:
-        """Analisa o bloco 0 (bloqueante; o caminhão só parte com ele pronto)."""
-        self.executor.preparar()
-
-    def entrar_no_bloco(self, k: int) -> ResultadoBloco:
-        """Bloqueante: espera a análise do bloco k, publica e libera o k+1."""
+        """Tudo o que uma página que conecta no meio da corrida precisa para se montar."""
         with self._trava:
-            if self.encerrada:
-                raise SessaoEncerrada("a sessão já foi encerrada")
-            if not 0 <= k < self.camada.n_blocos:
-                raise BlocoInvalido(f"bloco {k} não existe; a volta tem os blocos 0 a {self.camada.n_blocos - 1}")
-            if k != self.proximo_bloco:
-                raise BlocoForaDeOrdem(self.proximo_bloco, k)
-            resultado = self.executor.entrar_no_bloco(k)
-            self.proximo_bloco = k + 1
-            return resultado
+            return para_json({"sessao": self.info(), "entradas": list(self.entradas),
+                              "serie": {c: list(v) for c, v in self.serie.items()}, "previsao": self.previsao,
+                              "estado": self.ultimo_estado, "metricas": self.metricas.para_json(),
+                              "linha_de_base": self._base})
 
-    def _ao_publicar(self, resultado: ResultadoBloco) -> None:
-        for entrada in resultado.entradas:
-            entrada = para_json(entrada)
+    # ------------------------------------------------------------------ telemetria
+    def receber_telemetria(self, linhas: list[dict[str, Any]]) -> None:
+        if self.encerrada:
+            raise SessaoEncerrada("a sessão já foi encerrada")
+        if not linhas:
+            return
+        pontos: dict[str, list[Any]] = {c: [] for c in COLUNAS_SERIE}
+        with self._trava:
+            for linha in linhas:
+                linha = dict(linha)
+                t = float(linha.get("t", linha.get("sim_time", 0.0)))
+                linha["t"] = t
+                # aceleração mostrada suavizada (~0,3 s): a do CARLA vem com o ruído da física
+                dt = 1.0 / self.taxa_hz
+                self._a_suave += (float(linha.get("acc_long", 0.0)) - self._a_suave) * min(1.0, dt / 0.3)
+                linha["acc_long_suave"] = self._a_suave
+                self.linhas.append(linha)
+                if t >= self._t_serie + PASSO_SERIE_S - 1e-6:
+                    self._t_serie = t
+                    for c in COLUNAS_SERIE:
+                        valor = self._a_suave if c == "acc_long" else linha.get(c)
+                        valor = round(float(valor), 3) if isinstance(valor, (int, float)) else valor
+                        self.serie[c].append(valor)
+                        pontos[c].append(valor)
+            ultima = self.linhas[-1]
+            self._atualizar_metricas(ultima)
+            estado = {c: ultima.get(c) for c in COLUNAS_ESTADO}
+            estado["acc_long"] = self._a_suave
+            total = self.opcoes.comprimento_volta_m * self.opcoes.voltas
+            estado["progresso"] = round(min(1.0, max(0.0, float(ultima.get("d", 0.0)) / total)), 4) if total > 0 else None
+            self.ultimo_estado = para_json(estado)
+            mensagem = {"tipo": "telemetria", "pontos": pontos, "estado": self.ultimo_estado,
+                        "metricas": self.metricas.para_json()}
+        self.difusor.publicar(mensagem)
+        self._pedir_logs(float(ultima["t"]))
+
+    def _atualizar_metricas(self, linha: dict[str, Any]) -> None:
+        m = self.metricas
+        m.tempo_s = float(linha.get("t", 0.0))
+        m.distancia_m = float(linha.get("d", 0.0))
+        m.combustivel_ml = float(linha.get("combustivel_ml", 0.0) or 0.0)
+        m.custo_r = float(linha.get("custo_r", 0.0) or 0.0)
+        m.co2_g = float(linha.get("co2_g", 0.0) or 0.0)
+        if self._base and self._base.get("d"):
+            d = np.asarray(self._base["d"], float)
+            m.base_combustivel_ml = float(np.interp(m.distancia_m, d, np.asarray(self._base["combustivel_ml"], float)))
+            m.base_eventos = int(np.interp(m.distancia_m, d, np.asarray(self._base["eventos"], float)))
+            m.economia_medida_ml = m.base_combustivel_ml - m.combustivel_ml
+            m.economia_medida_pct = 100.0 * m.economia_medida_ml / m.base_combustivel_ml if m.base_combustivel_ml > 1 else None
+
+    # ------------------------------------------------------------------ decisões
+    def receber_decisao(self, entrada: dict[str, Any]) -> dict[str, Any]:
+        if self.encerrada:
+            raise SessaoEncerrada("a sessão já foi encerrada")
+        with self._trava:
+            entrada = self._publicar_entrada(entrada)
+            m = self.metricas
+            m.decisoes += 1
+            if entrada.get("texto_origem") == "llm":
+                m.decisoes_llm += 1
+            if entrada.get("latencia_llm_s"):
+                m.latencias_llm_s.append(float(entrada["latencia_llm_s"]))
+            if entrada.get("opcao") not in (None, "nenhuma"):
+                m.intervencoes += 1
+            m.economia_prevista_ml += float((entrada.get("fatos") or {}).get("economia_prevista_ml", 0.0) or 0.0)
+            self.previsao = para_json({
+                "id": entrada["id"], "bloco": entrada.get("bloco"), "t_ini": entrada.get("t_ini"),
+                "t_fim": entrada.get("t_fim"), "t_pedido": entrada.get("t_pedido"), "opcao": entrada.get("opcao"),
+                "acao": entrada.get("acao"), "texto_origem": entrada.get("texto_origem"), "nivel": entrada.get("nivel"),
+                "curvas": entrada.get("curvas") or {}, "instancias": entrada.get("instancias") or [],
+                "brutas": entrada.get("brutas") or [], "fatos": entrada.get("fatos") or {},
+                "fonte": entrada.get("fonte"), "base": entrada.get("base"),
+            })
+            previsao = self.previsao
+        self.difusor.publicar({"tipo": "previsao", "sessao": self.id, **previsao})
+        return entrada
+
+    def _publicar_entrada(self, entrada: dict[str, Any]) -> dict[str, Any]:
+        with self._trava:
+            entrada = para_json({**entrada, "id": self._proximo_id})
+            self._proximo_id += 1
             self.entradas.append(entrada)
             self._arquivo.write(json.dumps(entrada, ensure_ascii=False) + "\n")
-            self.difusor.publicar({"tipo": "entrada", "entrada": entrada})
-        self._arquivo.flush()
-        with self._trava_previsao:  # o bloco deixou de ser previsão (a do k+1 pode já ter chegado)
-            if self.previsao is not None and self.previsao["bloco"] <= resultado.bloco:
-                self.previsao = None
-        t_ini, t_fim = self.camada.intervalo_do_bloco(resultado.bloco)
-        bloco = {"bloco": resultado.bloco, "t_ini": t_ini, "t_fim": t_fim, "n_entradas": len(resultado.entradas),
-                 "n_problemas": sum(e["tipo"] == "problema" for e in resultado.entradas),
-                 "espera_s": round(resultado.espera_s, 3), "latencia_s": round(resultado.latencia_s, 3)}
-        self.blocos.append(bloco)
-        self.difusor.publicar({"tipo": "bloco", **bloco, "telemetria": self.telemetria_resumida(t_ini, t_fim)})
+            self._arquivo.flush()
+            if entrada.get("tipo") == "problema":
+                self.metricas.problemas_medidos += 1
+        self.difusor.publicar({"tipo": "entrada", "entrada": entrada})
+        return entrada
 
-    def _ao_analisar(self, resultado: ResultadoBloco) -> None:
-        """Na thread de trabalho: a análise de um bloco terminou e ele vira a previsão até ser publicado."""
-        t_ini, t_fim = self.camada.intervalo_do_bloco(resultado.bloco)
-        previsao = para_json({"bloco": resultado.bloco, "t_ini": t_ini, "t_fim": t_fim, "entradas": resultado.entradas,
-                              "n_entradas": len(resultado.entradas),
-                              "n_problemas": sum(e["tipo"] == "problema" for e in resultado.entradas),
-                              "latencia_s": round(resultado.latencia_s, 3),
-                              "telemetria": self.telemetria_resumida(t_ini, t_fim)})
-        with self._trava_previsao:
-            if resultado.bloco < self.proximo_bloco:  # o caminhão já entrou nele
-                return
-            self.previsao = previsao
-        # com o id da sessão: a previsão do bloco 0 sai antes do aviso "iniciada" desta sessão
-        self.difusor.publicar({"tipo": "previsao", "sessao": self.id, **previsao})
+    # ------------------------------------------------------------------ logs medidos (Etapa 2 ao vivo)
+    def _pedir_logs(self, t_atual: float, fim: bool = False) -> None:
+        """Manda para a camada de logs os blocos cuja telemetria (com a margem) já chegou."""
+        if self.camada is None:
+            return
+        while True:
+            k = self._blocos_pedidos
+            t_fim = (k + 1) * self.duracao_bloco
+            if not fim and t_atual < t_fim + self.margem_s:
+                break
+            if fim and k * self.duracao_bloco >= t_atual - 1e-6:
+                break
+            self._blocos_pedidos += 1
+            self._fila_logs.put(k)
 
-    def estado(self, sim_time: float, extra: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Estado do caminhão no instante sim_time (linha mais próxima da telemetria da sessão)."""
-        i = int(np.clip(np.searchsorted(self._t, sim_time), 0, len(self._t) - 1))
-        if i > 0 and abs(self._t[i - 1] - sim_time) < abs(self._t[i] - sim_time):
-            i -= 1
-        linha = self.telemetria.iloc[i]
-        estado = {"sim_time": float(self._t[i]), "bloco": int((self._t[i] - self.camada.t0) // self.camada.duracao_bloco),
-                  "quadro": i, "progresso": round(i / max(1, len(self._t) - 1), 4)}
-        estado.update({c: linha[c] for c in COLUNAS_ESTADO if c in linha.index})
-        estado.update(extra or {})
-        estado = para_json(estado)
-        self.ultimo_estado = estado
-        return estado
-
-    def resumo(self) -> dict[str, Any]:
-        problemas = [e for e in self.entradas if e["tipo"] == "problema"]
-        return {
-            "entradas": len(self.entradas),
-            "logs": sum(e["tipo"] == "log" for e in self.entradas),
-            "problemas": len(problemas),
-            "problemas_por_nivel": dict(Counter(e["nivel"] for e in problemas)),
-            "problemas_por_evento": dict(Counter(e["evento"] for e in problemas)),
-            "texto_origem": dict(Counter(e["texto_origem"] for e in self.entradas)),
-            "blocos_publicados": len(self.blocos),
-            "maior_espera_s": max((b["espera_s"] for b in self.blocos[1:]), default=0.0),
-            "latencia_media_s": round(float(np.mean([b["latencia_s"] for b in self.blocos])), 3) if self.blocos else 0.0,
-        }
-
-    def encerrar(self) -> dict[str, Any]:
+    def _trecho(self, k: int) -> Any:
+        t_ini, t_fim = k * self.duracao_bloco, (k + 1) * self.duracao_bloco
         with self._trava:
-            if not self.encerrada:
-                self.encerrada = True
-                self.executor.encerrar()
-                self._arquivo.close()
-                resumo = self.resumo()
-                with self.arquivo.with_name(self.arquivo.stem + "_resumo.json").open("w", encoding="utf-8") as f:
-                    json.dump(para_json(resumo), f, ensure_ascii=False, indent=2)
-                self.difusor.publicar({"tipo": "sessao", "evento": "encerrada", "sessao": self.info(), "resumo": resumo})
-        return self.resumo()
+            linhas = [l for l in self.linhas if t_ini - self.margem_s - 1.0 <= l["t"] < t_fim + self.margem_s]
+        dados = para_agentes(linhas, self.taxa_hz)
+        if len(dados):
+            dados["sim_time"] = [l["t"] for l in linhas]
+        return dados
+
+    def _laco_logs(self) -> None:
+        while True:
+            k = self._fila_logs.get()
+            if k is None:
+                return
+            try:
+                dados = self._trecho(k)
+                if len(dados) < 2:
+                    continue
+                for entrada in self.camada.processar_trecho(k, dados):
+                    self._publicar_entrada(entrada)
+            except Exception:
+                log.exception("Erro na camada de logs (bloco %d); a corrida continua.", k)
+
+    # ------------------------------------------------------------------ fim
+    def resumo(self) -> dict[str, Any]:
+        problemas = [e for e in self.entradas if e.get("tipo") == "problema"]
+        decisoes = [e for e in self.entradas if e.get("tipo") == "intervencao"]
+        return para_json({
+            "entradas": len(self.entradas),
+            "logs": sum(e.get("tipo") == "log" for e in self.entradas),
+            "problemas": len(problemas),
+            "problemas_por_nivel": dict(Counter(e.get("nivel") for e in problemas)),
+            "decisoes": len(decisoes),
+            "opcoes": dict(Counter(e.get("opcao") for e in decisoes)),
+            "decisoes_por_origem": dict(Counter(e.get("texto_origem") for e in decisoes)),
+            "texto_origem": dict(Counter(e.get("texto_origem") for e in self.entradas)),
+            "metricas": self.metricas.para_json(),
+            "piloto": self.resumo_piloto,
+        })
+
+    def encerrar(self, resumo_piloto: dict[str, Any] | None = None, prazo_logs_s: float = 60.0) -> dict[str, Any]:
+        with self._trava:
+            if self.encerrada:
+                return self.resumo()
+            self.encerrada = True
+            self.resumo_piloto = resumo_piloto
+            t_final = float(self.linhas[-1]["t"]) if self.linhas else 0.0
+        if self._thread_logs is not None:  # o último bloco (parcial) também vira log
+            self._pedir_logs(t_final, fim=True)
+            self._fila_logs.put(None)
+            self._thread_logs.join(timeout=prazo_logs_s)
+        with self._trava:
+            self._arquivo.close()
+            resumo = self.resumo()
+            with self.arquivo.with_name(self.arquivo.stem + "_resumo.json").open("w", encoding="utf-8") as f:
+                json.dump(resumo, f, ensure_ascii=False, indent=2)
+            self.previsao = None
+        self.difusor.publicar({"tipo": "sessao", "evento": "encerrada", "sessao": self.info(), "resumo": resumo})
+        return resumo
+
+
+__all__ = ["COLUNAS_SERIE", "Difusor", "OpcoesSessao", "SessaoAutonoma", "SessaoEncerrada", "para_json"]

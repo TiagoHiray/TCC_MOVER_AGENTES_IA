@@ -31,6 +31,8 @@ from mover.agentes.llm import MARCADOR_RASCUNHO, ClienteLLM
 
 log = logging.getLogger("mover.agentes")
 
+FONTES_SINTETICAS = ("sintetico", "misto")  # trechos com eventos de teste injetados (só no legado)
+
 
 class RespostaLog(BaseModel):
     resumo: str = Field(description="Entrada de log em português, 1 ou 2 frases objetivas")
@@ -38,7 +40,7 @@ class RespostaLog(BaseModel):
 
 class RespostaProblema(BaseModel):
     diagnostico: str = Field(description="Diagnóstico técnico curto do evento")
-    acao: str = Field(description="Ação recomendada ao motorista")
+    acao: str = Field(description="Ação recomendada ao piloto automático do caminhão")
 
 
 @dataclass
@@ -52,7 +54,7 @@ class Redacao:
 
 
 SISTEMA_LOG = (
-    "Você é o Supervisor da camada agêntica do projeto MOVER, o gêmeo digital de um caminhão. "
+    "Você é o Supervisor da camada agêntica do projeto MOVER, o gêmeo digital de um caminhão autônomo. "
     "Você escreve o log de condução para o operador a partir de fatos medidos pela telemetria.\n"
     "Regras:\n"
     "- Português do Brasil, 1 ou 2 frases, no máximo {max_palavras} palavras.\n"
@@ -63,9 +65,9 @@ SISTEMA_LOG = (
 )
 
 SISTEMA_PROBLEMA = (
-    "Você é o Supervisor da camada agêntica do projeto MOVER, o gêmeo digital de um caminhão. "
+    "Você é o Supervisor da camada agêntica do projeto MOVER, o gêmeo digital de um caminhão autônomo. "
     "O Especialista de jerk detectou uma variação brusca da aceleração. Escreva o diagnóstico "
-    "e a ação recomendada ao motorista.\n"
+    "e a ação recomendada ao piloto automático.\n"
     "Regras:\n"
     "- Português do Brasil; diagnóstico com até {max_palavras} palavras e ação com até {max_palavras} palavras.\n"
     "- Use apenas os fatos do evento e a base de conhecimento. Não invente peças, defeitos nem números.\n"
@@ -74,7 +76,7 @@ SISTEMA_PROBLEMA = (
 
 TAREFA_LOG = ("Tarefa: reescreva o rascunho como uma entrada de log natural e objetiva para o operador "
               "do caminhão. Mantenha os fatos importantes e não acrescente números.")
-TAREFA_PROBLEMA = ("Tarefa: reescreva o rascunho com linguagem natural e direta para o motorista, sem perder "
+TAREFA_PROBLEMA = ("Tarefa: reescreva o rascunho com linguagem natural e direta para o operador, sem perder "
                    "o tipo do evento, a gravidade e a ação recomendada.")
 
 # ---------------------------------------------------------------------------------------------
@@ -96,11 +98,15 @@ _UNIDADES_NO_TEXTO: tuple[tuple[str, re.Pattern[str]], ...] = (  # a ordem impor
     ("m/s", re.compile(r"\s*m\s*/\s*s\b", re.IGNORECASE)),
     ("%", re.compile(r"\s*(?:%|por\s*cento\b)", re.IGNORECASE)),
     ("°", re.compile(r"\s*(?:°|º|graus?\b)", re.IGNORECASE)),
+    ("mL", re.compile(r"\s*(?:mL|ml|mililitros?)\b")),
+    ("kg", re.compile(r"\s*(?:kg|quilos?)\b", re.IGNORECASE)),
+    ("L", re.compile(r"\s*(?:L|litros?)\b")),
     ("s", re.compile(r"\s*(?:s|seg|segundos?)\b", re.IGNORECASE)),
     ("m", re.compile(r"\s*(?:m|metros?)\b", re.IGNORECASE)),
 )
+_REAIS_ANTES = re.compile(r"R\$\s*$")
 _SUFIXOS_UNIDADE = (("_kmh", "km/h"), ("_mps3", "m/s³"), ("_mps2", "m/s²"), ("_pct", "%"), ("_graus", "°"),
-                    ("_s", "s"), ("_m", "m"))
+                    ("_ml", "mL"), ("_kg", "kg"), ("_l", "L"), ("_r", "R$"), ("_s", "s"), ("_m", "m"))
 
 Permitidos = dict[str | None, list[float]]  # unidade (None = fato sem unidade conhecida) -> valores absolutos
 
@@ -115,12 +121,18 @@ def unidade_da_chave(chave: Any) -> str | None:
 
 
 def numeros_com_unidade(texto: str) -> list[tuple[float, str | None]]:
-    """Números citados no texto, com a unidade escrita logo depois (ou None), ignorando horários HH:MM[:SS]."""
+    """Números citados no texto, com a unidade escrita logo depois (ou None), ignorando horários HH:MM[:SS].
+
+    "R$" vem antes do número ("R$ 0,21").
+    """
     sem_horarios = _HORARIO.sub(" ", texto)
     saida: list[tuple[float, str | None]] = []
     for m in _NUMERO.finditer(sem_horarios):
         depois = sem_horarios[m.end():m.end() + 16]
-        unidade = next((nome for nome, padrao in _UNIDADES_NO_TEXTO if padrao.match(depois)), None)
+        if _REAIS_ANTES.search(sem_horarios[max(0, m.start() - 4):m.start()]):
+            unidade: str | None = "R$"
+        else:
+            unidade = next((nome for nome, padrao in _UNIDADES_NO_TEXTO if padrao.match(depois)), None)
         saida.append((float(m.group().replace("−", "-").replace(",", ".")), unidade))
     return saida
 
@@ -293,7 +305,7 @@ class Supervisor:
                 )
         else:
             linhas.append("Eventos do especialista de jerk: nenhum.")
-        if f["fonte"] != "real":
+        if f["fonte"] in FONTES_SINTETICAS:  # legado: eventos injetados na gravação do Sensor Logger
             linhas.append("Observação: o trecho contém eventos sintéticos de teste.")
         linhas += [f"{MARCADOR_RASCUNHO} {json.dumps(rascunho, ensure_ascii=False)}", TAREFA_LOG]
         return "\n".join(linhas)
@@ -326,7 +338,7 @@ class Supervisor:
             f"- causa provável: {textos.NOMES_CAUSA[ev['causa']]}",
             f"Base de conhecimento: consequência: {base['consequencia']}; ação indicada: {base['acao']}.",
         ]
-        if ev["fonte"] != "real":
+        if ev["fonte"] in FONTES_SINTETICAS:
             linhas.append("Observação: evento sintético de teste.")
         linhas += [f"{MARCADOR_RASCUNHO} {json.dumps(rascunho, ensure_ascii=False)}", TAREFA_PROBLEMA]
         return "\n".join(linhas)

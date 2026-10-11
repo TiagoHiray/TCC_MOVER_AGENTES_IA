@@ -1,14 +1,15 @@
-"""Sobe o servidor da camada agêntica (FastAPI + WebSocket) e a página dos 4 painéis.
+"""Sobe o servidor do painel (FastAPI + WebSocket) com a página dos 4 painéis.
+
+Normalmente não é preciso: o piloto (python -m mover.autonomo.dirigir) sobe o servidor no mesmo
+processo. Use este comando para deixar a página no ar à parte, por exemplo antes de várias corridas.
 
 Uso, a partir da pasta src/ do repositório:
     python -m mover.servidor.rodar_servidor                      # 127.0.0.1:8000 (config/simulacao.yaml)
     python -m mover.servidor.rodar_servidor --host 0.0.0.0 --porta 8001
 
-Com o servidor no ar, rode o replay em outro terminal (python -m mover.simulacao.replay_carla) e
-abra a página em http://127.0.0.1:8000/ (simulação, dashboard, log e chat). A documentação
-interativa das rotas fica em http://127.0.0.1:8000/docs e o log ao vivo em ws://127.0.0.1:8000/ws.
-O provedor de LLM de cada volta é escolhido pelo replay ao abrir a sessão (--provedor/--modelo);
-sem isso vale o .env ou o config/agentes.yaml.
+Com o servidor no ar, rode o piloto em outro terminal (python -m mover.autonomo.dirigir; ele usa o
+servidor que já estiver na porta) e abra http://127.0.0.1:8000/ (simulação, dashboard, log e chat).
+A documentação interativa das rotas fica em http://127.0.0.1:8000/docs.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ def carregar_configs(config_simulacao: str = "config/simulacao.yaml",
 
 
 def iniciar_em_thread(app: Any, host: str, porta: int, timeout_s: float = 30.0):
-    """Roda o uvicorn numa thread daemon (usado pelo replay com --iniciar-servidor).
+    """Roda o uvicorn numa thread daemon (usado pelo piloto, que sobe o servidor no mesmo processo).
 
     Devolve (servidor, thread). Para parar: parar_servidor(servidor, thread).
     """
@@ -67,7 +68,7 @@ def iniciar_em_thread(app: Any, host: str, porta: int, timeout_s: float = 30.0):
             servidor.should_exit = True
             raise TimeoutError(f"o servidor não respondeu em {timeout_s:.0f} s")
         time.sleep(0.05)
-    log.info("Servidor da camada agêntica em http://%s:%d (painel em http://%s:%d/, log ao vivo em ws://%s:%d/ws)",
+    log.info("Servidor do painel em http://%s:%d (página em http://%s:%d/, log ao vivo em ws://%s:%d/ws)",
              host, porta, host, porta, host, porta)
     return servidor, thread
 
@@ -78,7 +79,7 @@ def parar_servidor(servidor: Any, thread: threading.Thread, timeout_s: float = 1
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Servidor da camada agêntica (FastAPI + WebSocket).")
+    parser = argparse.ArgumentParser(description="Servidor do painel do gêmeo digital (FastAPI + WebSocket).")
     parser.add_argument("--config", default="config/simulacao.yaml", help="YAML da simulação (seção servidor)")
     parser.add_argument("--config-agentes", default="config/agentes.yaml", help="YAML da camada agêntica")
     parser.add_argument("--host", help="endereço (padrão: YAML, 127.0.0.1)")
@@ -95,7 +96,8 @@ def main(argv: list[str] | None = None) -> None:
     cs = cfg_sim.get("servidor", {})
     host = args.host or cs.get("host", "127.0.0.1")
     porta = int(args.porta or cs.get("porta", 8000))
-    app = criar_app(cfg_agentes, cfg_sim)
+    cfg_autonomo = carregar_yaml("config/autonomo.yaml") if caminho("config/autonomo.yaml").exists() else {}
+    app = criar_app(cfg_agentes, cfg_sim, cfg_autonomo=cfg_autonomo)
     log.info("Painel: http://%s:%d/ | documentação das rotas: http://%s:%d/docs | log ao vivo: ws://%s:%d/ws",
              host, porta, host, porta, host, porta)
     uvicorn.run(app, host=host, port=porta, log_level="info", timeout_graceful_shutdown=TIMEOUT_ENCERRAMENTO_S)

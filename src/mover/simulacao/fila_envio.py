@@ -1,7 +1,7 @@
 """Fila de envio em segundo plano: quem coloca um item nunca espera o destino.
 
-Usada pelo replay para mandar ao servidor as poses do caminhão (~5 Hz) e os quadros da câmera do
-painel (~10 fps). O laço de 20 Hz do replay não pode travar se o servidor ficar lento: a fila é
+Usada pela corrida no CARLA para mandar ao servidor os quadros da câmera do painel (~10 fps).
+O laço de 20 Hz da corrida não pode travar se o servidor ficar lento: a fila é
 curta e, cheia, descarta o item mais antigo (para um painel ao vivo, o mais novo é o que importa).
 """
 

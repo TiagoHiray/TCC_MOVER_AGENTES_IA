@@ -1,4 +1,6 @@
-"""Confere, sem abrir o CARLA, se a volta gravada cabe nas vias do mapa .xodr.
+"""LEGADO: confere, sem abrir o CARLA, se a volta gravada cabe nas vias do mapa .xodr.
+
+Fora do fluxo do gêmeo digital, em que a rota sai só do mapa (mover.autonomo.rota_mapa).
 
 Uso, a partir da pasta src/ do repositório:
     python -m mover.simulacao.verificar_mapa                        # mapa do config/simulacao.yaml

@@ -1,0 +1,122 @@
+# =============================================================================
+# Gêmeo digital com caminhão autônomo: plano de missão, piloto, governador, consumo e benchmark.
+# Caminhos relativos são resolvidos a partir da raiz do repositório.
+# O mapa, o CARLA, as câmeras e o servidor continuam em config/simulacao.yaml.
+# =============================================================================
+
+missao:
+  # Rota da volta, zonas de velocidade e paradas. Gerado por python -m mover.autonomo.gerar_missao
+  # (só do mapa do CARLA, do OSM e desta seção gerar_missao) e editável à mão.
+  arquivo: config/missao.yaml
+  voltas: 1                        # voltas da corrida ao vivo (--voltas)
+
+gerar_missao:
+  # Nenhuma gravação de celular entra aqui: tudo sai do mapa do CARLA, do OSM do campus e desta seção.
+  cruzeiro_kmh: 30                 # velocidade do piloto automático fora das zonas
+  rota:
+    # Itinerário da volta: as vias do mapa_final.xodr, na ordem em que o caminhão passa por elas.
+    # Os conectores das junções são achados sozinhos. Ids das vias: python -m mover.autonomo.rota_mapa --figura vias.png
+    vias: [255, 250, 257, 258, 259, 260, 263, 252, 262, 272, 273, 274]
+    largada: [225.0, 162.0]        # ponto de largada no mapa (x, y do OpenDRIVE)
+  # Lombadas do campus: o OpenDRIVE não tem lombadas, então elas são pontos fixos do mapa (x, y),
+  # numerados na ordem da volta. Para mudar, edite a lista e rode o gerar_missao de novo.
+  lombadas:
+    - [225.7, 125.5]
+    - [191.4, 37.7]
+    - [105.8, 34.8]
+    - [54.5, 88.6]
+    - [65.5, 235.2]
+    - [143.8, 248.5]
+    - [224.4, 199.0]
+  lombada: {v_max_kmh: 10, meia_largura_m: 8, distancia_max_m: 10}
+  faixa: {v_max_kmh: 15, meia_largura_m: 6, distancia_max_m: 10}
+  portao: {duracao_s: 4, distancia_max_m: 10}
+  curva: {acel_lateral_max_mps2: 1.6, v_min_kmh: 10, folga_kmh: 2, antes_m: 5, juntar_m: 10}
+
+veiculo:
+  # Modelo longitudinal do caminhão: simulador substituto, plano dos próximos 10 s e simulação das alterações.
+  # Com o CARLA, a massa vem da física do caminhão (get_physics_control).
+  massa_kg: 9000
+  area_frontal_m2: 7.5
+  cd: 0.65
+  cr: 0.008
+  potencia_max_kw: 180
+  forca_tracao_max_n: 18000
+  desacel_freio_max_mps2: 8.0
+  tau_motor_s: 0.30
+  tau_freio_s: 0.15
+
+piloto:
+  # Emulação do controle de velocidade do Traffic Manager (PID; satura o acelerador em 0,85 e o freio em 0,7).
+  kp: 2.5
+  ki: 0.15
+  acelerador_max: 0.85
+  freio_max: 0.70
+
+governador:
+  desacel_bruta_mps2: 4.5          # no plano sem alteração, o caminhão só começa a frear a esta desaceleração
+  jerk_max_mps3: 1.6               # jerk da velocidade desejada suavizada
+  avanco_s: 0.35                   # compensa o atraso do controle do Traffic Manager
+  horizonte_m: 250
+
+opcoes:
+  # Intervenções que a camada agêntica pode escolher para cada elemento do plano:
+  # [desaceleração antecipada m/s², aceleração da retomada m/s², teto de velocidade do trecho seguinte km/h]
+  economica: [0.6, 0.5, 22]
+  suave: [0.8, 0.6, null]
+  moderada: [1.2, 0.9, null]
+  firme: [1.8, 1.2, null]
+
+carla:
+  # Lado CARLA (mover.autonomo.carla_tm). O piloto automático é o Traffic Manager do CARLA:
+  # regras de navegação + controle PID (não é aprendizado de máquina).
+  porta_tm: 8100                   # a 8000 é a do servidor da página
+  semente: 7
+  passo_caminho_m: 10              # pontos da rota passados ao Traffic Manager (set_path)
+  clima: ClearNoon                 # um dos carla.WeatherParameters
+  telemetria_motor: false          # rpm e marcha a cada tick (get_telemetry_data)
+
+corridas:
+  pasta: data/autonomo/corridas    # telemetria.csv, decisoes.jsonl, resumo.json e a gravação do CARLA
+
+decisao:
+  # A cada bloco, o caminhão manda aos agentes o plano do bloco seguinte (montado a partir da corrida
+  # atual) e anda no atual enquanto eles decidem. Para um buffer menor, baixe horizonte_s junto com
+  # prazo_llm_s (o LLM precisa responder antes do bloco acabar) e blocos.duracao_s do agentes.yaml.
+  horizonte_s: 10                  # o bloco seguinte, que os agentes analisam enquanto o caminhão anda no atual
+  prazo_llm_s: 6.0                 # tempo de relógio para o LLM escolher; depois disso vale a regra
+  valor_tempo_r_h: 30.0            # custo do caminhão parado no tempo (sem combustível), para pesar o tempo extra
+  max_tempo_extra_pct: 60          # a regra não escolhe opções que alonguem o trecho mais do que isto
+  max_palavras: 45
+
+suavizador_ml:
+  # Especialista de ML que propõe quanto suavizar cada decisão brusca do plano do caminhão
+  # (python -m mover.agentes.suavizador_ml). Sem o arquivo, a primeira corrida com agentes treina um.
+  ativo: true
+  modelo: data/modelos/suavizador_ml.joblib
+  situacoes: 2000                  # situações simuladas pelo modelo do caminhão para o treino
+  n_arvores: 200                   # floresta aleatória
+  semente: 7
+  processos: 0                     # processos em paralelo no treino (0 = núcleos - 1)
+
+consumo:
+  # Modelo VT-CPFM (linha de Willans + termo quadrático) a partir da potência nas rodas.
+  combustivel: diesel
+  densidade_kg_l: 0.835
+  bsfc_g_kwh: 225                  # consumo específico típico de motor diesel em boa carga
+  marcha_lenta_l_h: 2.0
+  eficiencia_transmissao: 0.88
+  potencia_quadratica_kw: 1000     # termo a2: +10 % de consumo marginal a 100 kW
+  preco_r_l: 6.00                  # atualize com o preço médio do diesel (ANP)
+  co2_kg_l: 2.68                   # diesel fóssil
+
+limiares:
+  atencao_mps3: 2.5                # os mesmos da camada agêntica (config/agentes.yaml)
+  critico_mps3: 5.0
+  agrupar_s: 1.0
+  fc_hz: 1.5
+
+benchmark:
+  voltas: 3                        # padrão de --voltas: N voltas sem agentes e depois N com agentes
+  pasta: data/benchmark
+  extrapolar_voltas: 100
