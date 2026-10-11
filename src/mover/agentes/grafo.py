@@ -55,10 +55,14 @@ def memoria_inicial() -> dict[str, Any]:
 
 
 class CamadaAgentica:
-    """Processa a telemetria tratada bloco a bloco e devolve as entradas do log."""
+    """Processa a telemetria bloco a bloco e devolve as entradas do log.
 
-    def __init__(self, cfg: dict[str, Any], telemetria: pd.DataFrame, supervisor: Supervisor,
-                 especialista_ml: EspecialistaML | None = None):
+    Offline (Etapa 2), recebe a telemetria inteira. Ao vivo (caminhão autônomo), começa sem
+    telemetria e cada bloco chega já preparado em `processar_trecho`.
+    """
+
+    def __init__(self, cfg: dict[str, Any], telemetria: pd.DataFrame | None, supervisor: Supervisor,
+                 especialista_ml: EspecialistaML | None = None, t0: float | None = None):
         self.cfg = cfg
         self.taxa_hz = float(cfg["entrada"]["taxa_hz"])
         cb = cfg["blocos"]
@@ -68,9 +72,9 @@ class CamadaAgentica:
         self.margem_s = float(cb["margem_eventos_s"])
         self.faixas = list(cfg["estado"]["faixas_velocidade_kmh"])
         self.reto_ate_graus = float(cfg["estado"].get("reto_ate_graus", 15))
-        self.telemetria = telemetria.reset_index(drop=True)
-        self._t = self.telemetria["sim_time"].to_numpy(dtype=float)
-        self.t0 = float(self._t[0])
+        self.telemetria = telemetria.reset_index(drop=True) if telemetria is not None else pd.DataFrame()
+        self._t = self.telemetria["sim_time"].to_numpy(dtype=float) if len(self.telemetria) else np.zeros(0)
+        self.t0 = float(t0) if t0 is not None else (float(self._t[0]) if len(self._t) else 0.0)
         self.especialista_jerk = EspecialistaJerk(cfg["limiares"])
         self.especialista_ml = especialista_ml
         self.supervisor = supervisor
@@ -80,6 +84,8 @@ class CamadaAgentica:
     # ------------------------------------------------------------------ interface pública
     @property
     def n_blocos(self) -> int:
+        if not len(self._t):
+            return 0
         duracao = self._t[-1] + 1.0 / self.taxa_hz - self.t0
         return max(1, math.ceil(duracao / self.duracao_bloco - EPS))
 
@@ -91,11 +97,16 @@ class CamadaAgentica:
         """Roda o grafo no bloco `indice` (blocos devem ser processados em ordem)."""
         t_ini, t_fim = self.intervalo_do_bloco(indice)
         no_bloco = (self._t >= t_ini - self.margem_s - EPS) & (self._t < t_fim + self.margem_s - EPS)
+        return self.processar_trecho(indice, self.telemetria.loc[no_bloco].reset_index(drop=True))
+
+    def processar_trecho(self, indice: int, dados: pd.DataFrame) -> list[dict[str, Any]]:
+        """Roda o grafo num trecho já preparado (o bloco mais a margem de contexto dos dois lados)."""
+        t_ini, t_fim = self.intervalo_do_bloco(indice)
         saida = self.grafo.invoke({
             "bloco": indice,
             "t_ini": t_ini,
             "t_fim": t_fim,
-            "dados": self.telemetria.loc[no_bloco].reset_index(drop=True),
+            "dados": dados.reset_index(drop=True),
             "memoria": self.memoria,
         })
         self.memoria = saida["memoria"]

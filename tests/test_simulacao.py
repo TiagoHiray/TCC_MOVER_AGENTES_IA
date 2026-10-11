@@ -1,10 +1,11 @@
-"""Testes da simulação (sem CARLA): leitor OpenDRIVE, projeção, alinhamento, laço do replay e câmera do painel.
+"""Testes da simulação (sem CARLA): leitor OpenDRIVE, projeção, alinhamento e o lado CARLA da corrida autônoma.
 
 Rodar a partir da raiz do repositório:
     python -m pytest tests -q
 
 O mapa de teste é um estádio (duas retas e duas curvas de 180°) gerado em tests/auxiliares.py.
-O lado CARLA do replay é testado com um módulo `carla` falso, que registra as chamadas.
+O lado CARLA (Traffic Manager, telemetria, câmera, gravador) é testado com um módulo `carla` falso,
+que registra as chamadas e leva o caminhão pelo caminho passado ao Traffic Manager.
 """
 
 from __future__ import annotations
@@ -21,22 +22,18 @@ from typing import Any
 
 import numpy as np
 import pytest
-from auxiliares import (FRENAGEM, LARGURA_M, RAIO_M, RETA_M, bgra_azul, centro_da_faixa, pista_com_quina_xodr,
-                        pista_estadio_xodr, telemetria, volta_no_estadio, volta_suave_na_quina)
+from auxiliares import (LARGURA_M, RAIO_M, RETA_M, bgra_azul, centro_da_faixa, pista_com_quina_xodr, pista_estadio_xodr,
+                        plano_estadio, volta_no_estadio, volta_suave_na_quina, telemetria)
 from fastapi.testclient import TestClient
 
-from mover.agentes import eventos_sinteticos
 from mover.agentes.llm import FalsoLLM
 from mover.agentes.supervisor import Supervisor
 from mover.config import carregar_yaml
-from mover.interface.cena import montar_cena
 from mover.servidor.app import criar_app
 from mover.simulacao.alinhamento import alinhar
 from mover.simulacao.camera_painel import codificar_jpeg
 from mover.simulacao.opendrive import ler_xodr
 from mover.simulacao.projecao import criar_projecao
-from mover.simulacao.replay_carla import (ClienteAgentes, ErroServidor, MundoCarla, MundoFalso, Relogio, Trajeto,
-                                          rodar_replay, rotulo_problema)
 
 PERIMETRO = 2 * RETA_M + 2 * math.pi * RAIO_M
 LAT0, LON0 = -23.648254, -46.5738235  # centro do campus do IMT
@@ -189,68 +186,23 @@ def test_yaw_do_carla_segue_a_direcao_do_movimento():
 
 
 # ---------------------------------------------------------------------------------------------
-# Replay sem CARLA
-# ---------------------------------------------------------------------------------------------
-def test_rotulo_do_problema_na_pista_e_ascii():
-    texto = rotulo_problema({"nivel": "critico", "t_pico": 37.24, "evento": "soltura_freio",
-                             "causa": "irregularidade_via", "fatos": {"jerk_max_abs_mps3": 6.61}})
-    assert texto == "CRITICO 37.2s | soltura do freio (provavel lombada) | jerk 6.6 m/s3"
-    assert rotulo_problema({"nivel": "atencao", "t_pico": 5, "evento": "arrancada_brusca",
-                            "causa": "conducao_brusca"}).isascii()
-
-
-def test_relogio_segue_o_fator_de_tempo_e_nao_tenta_recuperar_atraso():
-    relogio = Relogio(fator_tempo=20.0)
-    relogio.ancorar(0.0)
-    inicio = time.monotonic()
-    for t in np.arange(0.0, 2.0, 0.05):  # 2 s de simulação a 20x = 0,1 s
-        relogio.esperar_ate(t)
-    assert 0.08 < time.monotonic() - inicio < 0.5
-    relogio.ancorar(0.0)
-    time.sleep(0.4)
-    antes = time.monotonic()
-    relogio.esperar_ate(0.05)  # atrasado: reancora em vez de correr
-    assert relogio.atrasos == 1 and time.monotonic() - antes < 0.05
-
-
-def test_replay_sem_carla_anuncia_os_blocos_em_ordem_e_marca_os_problemas(tmp_path):
-    cfg = carregar_yaml("config/agentes.yaml")
-    dados = eventos_sinteticos.injetar(volta_no_estadio(25.0), [FRENAGEM], {})
-    trajeto = Trajeto.de_poses(alinhar(ler_xodr(pista_estadio_xodr(), 0.5), dados, SEM_ICP).poses)
-    app = criar_app(cfg, {"servidor": {"pasta_sessoes": str(tmp_path)}}, telemetria=dados,
-                    fabrica_supervisor=lambda opcoes: Supervisor(FalsoLLM(), cfg), sem_ml=True)
-    impressos: list[str] = []
-    mundo = MundoFalso()
-    with TestClient(app) as http:
-        cliente = ClienteAgentes(http)
-        sessao = cliente.abrir_sessao({"tempo_real": False})
-        mundo.preparar(trajeto, None, dados)
-        res = rodar_replay(trajeto, cliente, mundo, sessao, sem_espera=True, imprimir=impressos.append)
-        fim = cliente.encerrar_sessao()
-        cliente.fechar()
-
-    assert res.quadros == mundo.quadros == len(dados) == 500
-    assert [b["bloco"] for b in res.blocos] == [0, 1, 2] and not res.interrompido
-    assert res.estados == cliente.estados_enviados == 125
-    assert len(mundo.marcas) == 1
-    quadro, problema = mundo.marcas[0]
-    assert problema["evento"] == "frenagem_brusca" and abs(trajeto.t[quadro] - problema["t_pico"]) < 0.03
-    assert fim["resumo"]["blocos_publicados"] == 3 and fim["sessao"]["encerrada"]
-    assert len(Path(sessao["arquivo"]).read_text(encoding="utf-8").splitlines()) == len(res.entradas)
-    assert impressos[0].startswith("=== Bloco 00 (0-10 s)") and any("PROBLEMA" in linha for linha in impressos)
-
-
-# ---------------------------------------------------------------------------------------------
-# Lado CARLA com um módulo `carla` falso
+# Lado CARLA da corrida autônoma, com um módulo `carla` falso
 # ---------------------------------------------------------------------------------------------
 def carla_falso() -> types.ModuleType:
-    """O mínimo da API do CARLA 0.9.16 usada pelo replay, registrando as chamadas."""
+    """O mínimo da API do CARLA 0.9.16 usada por carla_tm.py, registrando as chamadas.
+
+    O Traffic Manager falso leva o caminhão pelo caminho recebido em set_path, com a velocidade
+    seguindo a desejada (atraso de 0,3 s, até 6 m/s²): o bastante para o laço de condução rodar.
+    """
     mod = types.ModuleType("carla")
     chamadas: list[tuple] = []
 
-    class Location:
+    class Vector3D:
         def __init__(self, x=0.0, y=0.0, z=0.0):
             self.x, self.y, self.z = x, y, z
+
+    class Location(Vector3D):
+        pass
 
     class Rotation:
         def __init__(self, pitch=0.0, yaw=0.0, roll=0.0):
@@ -260,9 +212,17 @@ def carla_falso() -> types.ModuleType:
         def __init__(self, location=None, rotation=None):
             self.location, self.rotation = location or Location(), rotation or Rotation()
 
-    class Color:
-        def __init__(self, r=0, g=0, b=0, a=255):
-            self.r, self.g, self.b, self.a = r, g, b, a
+        def get_forward_vector(self):
+            r = math.radians(self.rotation.yaw)
+            return Vector3D(math.cos(r), math.sin(r), 0.0)
+
+        def get_right_vector(self):
+            r = math.radians(self.rotation.yaw)
+            return Vector3D(-math.sin(r), math.cos(r), 0.0)
+
+    class VehicleControl:
+        def __init__(self, throttle=0.0, steer=0.0, brake=0.0, hand_brake=False, reverse=False, manual_gear_shift=False, gear=0):
+            self.throttle, self.steer, self.brake, self.hand_brake, self.gear = throttle, steer, brake, hand_brake, gear
 
     class LaneType:
         Any, Driving = -2, 2
@@ -272,43 +232,128 @@ def carla_falso() -> types.ModuleType:
             self.__dict__.update(kwargs)
 
     class Configuracao:
-        synchronous_mode, fixed_delta_seconds = False, None
+        synchronous_mode, fixed_delta_seconds, no_rendering_mode = False, None, False
 
-    class Clima:
-        sun_altitude_angle, cloudiness, precipitation = 10.0, 0.0, 0.0
+    class WeatherParameters:
+        ClearNoon = "ClearNoon"
 
     class Waypoint:
-        transform = Transform(Location(0.0, 0.0, 1.5))
+        transform = Transform(Location(0.0, 0.0, 0.4))
 
     class Mapa:
-        name = "estadio"
+        name = "OpenDriveMap"
 
         def get_waypoint(self, location, project_to_road=True, lane_type=LaneType.Driving):
-            assert project_to_road and lane_type == LaneType.Any
             return Waypoint()
 
+        def to_opendrive(self):
+            return "<OpenDRIVE/>"
+
     class Caixa:
-        location, extent = Location(0.0, 0.0, 1.9), Location(4.0, 1.3, 1.7)  # fundo 0,2 m acima da origem
+        location, extent = Location(0.0, 0.0, 1.9), Location(4.0, 1.3, 1.7)
 
     class Ator:
-        type_id, id, bounding_box = "vehicle.carlamotors.firetruck", 42, Caixa()
+        type_id, id, bounding_box = "vehicle.carlamotors.european_hgv", 42, Caixa()
 
-        def __init__(self):
-            self.transformacoes, self.fisica, self.destruido = [], True, False
+        def __init__(self, transformacao):
+            self.tf = transformacao
+            self.v, self.a, self.s_caminho = 0.0, 0.0, 0.0
+            self.autopiloto, self.controles, self.destruido = None, [], False
 
-        def set_simulate_physics(self, ligada):
-            self.fisica = ligada
+        def apply_control(self, controle):
+            self.controles.append(controle)
 
-        def set_transform(self, t):
-            self.transformacoes.append(t)
+        def set_autopilot(self, ligado=True, porta=8000):
+            chamadas.append(("autopiloto", ligado, porta))
+            self.autopiloto = (ligado, porta)
+
+        def get_transform(self):
+            return self.tf
+
+        def get_velocity(self):
+            f = self.tf.get_forward_vector()
+            return Vector3D(f.x * self.v, f.y * self.v, 0.0)
+
+        def get_acceleration(self):
+            f = self.tf.get_forward_vector()
+            return Vector3D(f.x * self.a, f.y * self.a, 0.0)
+
+        def get_angular_velocity(self):
+            return Vector3D(0.0, 0.0, 0.0)
+
+        def get_control(self):
+            return VehicleControl(throttle=max(0.0, self.a) / 3.0, brake=max(0.0, -self.a) / 6.0)
 
         def destroy(self):
             chamadas.append(("destruir_ator",))
             self.destruido = True
             return True
 
+    class TrafficManager:
+        def __init__(self, porta):
+            self.porta, self.sincrono, self.desejada, self.caminho, self.ajustes = porta, False, {}, [], {}
+
+        def get_port(self):
+            return self.porta
+
+        def set_synchronous_mode(self, ligado):
+            chamadas.append(("tm_sincrono", ligado))
+            self.sincrono = ligado
+
+        def set_random_device_seed(self, semente):
+            self.ajustes["semente"] = semente
+
+        def set_hybrid_physics_mode(self, ligado):
+            self.ajustes["hibrida"] = ligado
+
+        def auto_lane_change(self, ator, ligado):
+            self.ajustes["troca_faixa"] = ligado
+
+        def ignore_lights_percentage(self, ator, perc):
+            self.ajustes["semaforos"] = perc
+
+        def ignore_signs_percentage(self, ator, perc):
+            self.ajustes["placas"] = perc
+
+        def distance_to_leading_vehicle(self, ator, dist):
+            self.ajustes["lider"] = dist
+
+        def set_desired_speed(self, ator, kmh):
+            self.desejada[ator.id] = kmh
+
+        def set_path(self, ator, pontos, empty_buffer=True):
+            chamadas.append(("caminho", len(pontos)))
+            p0 = ator.tf.location
+            self.caminho = [(p0.x, p0.y)] + [(p.x, p.y) for p in pontos]
+            ator.s_caminho = 0.0
+
+        def mover(self, ator, dt):
+            """Avança o caminhão pelo caminho (a velocidade persegue a desejada)."""
+            alvo = self.desejada.get(ator.id, 0.0) / 3.6 if ator.autopiloto and ator.autopiloto[0] else 0.0
+            a = max(-6.0, min(3.0, (alvo - ator.v) / 0.3))
+            ator.v = max(0.0, ator.v + a * dt)
+            ator.a = a if ator.v > 0 or a > 0 else 0.0
+            ator.s_caminho += ator.v * dt
+            resto = ator.s_caminho
+            for (x0, y0), (x1, y1) in zip(self.caminho, self.caminho[1:]):
+                comp = math.hypot(x1 - x0, y1 - y0)
+                if resto <= comp or (x1, y1) == self.caminho[-1]:
+                    u = min(1.0, resto / comp) if comp > 1e-9 else 0.0
+                    yaw = math.degrees(math.atan2(y1 - y0, x1 - x0))
+                    ator.tf = Transform(Location(x0 + u * (x1 - x0), y0 + u * (y1 - y0), 0.4), Rotation(yaw=yaw))
+                    return
+                resto -= comp
+
+    class Timestamp:
+        def __init__(self, t):
+            self.elapsed_seconds = t
+
+    class Snapshot:
+        def __init__(self, frame, t):
+            self.frame, self.timestamp = frame, Timestamp(t)
+
     class Blueprint:
-        id = "vehicle.carlamotors.firetruck"
+        id = "vehicle.carlamotors.european_hgv"
 
         def __init__(self):
             self.atributos = {}
@@ -329,8 +374,6 @@ def carla_falso() -> types.ModuleType:
         Rigid, SpringArm, SpringArmGhost = 0, 1, 2
 
     class Sensor:
-        """carla.Sensor: o callback recebe carla.Image (raw_data em BGRA) numa thread do cliente."""
-
         type_id, id = "sensor.camera.rgb", 43
 
         def __init__(self):
@@ -353,30 +396,27 @@ def carla_falso() -> types.ModuleType:
 
     class Biblioteca:
         def find(self, nome):
-            assert nome in ("vehicle.carlamotors.firetruck", "sensor.camera.rgb"), nome
-            return mod.blueprint if nome == "vehicle.carlamotors.firetruck" else mod.blueprint_camera
+            assert nome in ("vehicle.carlamotors.european_hgv", "sensor.camera.rgb"), nome
+            return mod.blueprint if nome == "vehicle.carlamotors.european_hgv" else mod.blueprint_camera
 
-    class Debug:
-        def draw_point(self, location, size=0.1, color=None, life_time=-1.0):
-            chamadas.append(("ponto", location, life_time))
+    class Espectador:
+        def __init__(self):
+            self.transformacoes = []
 
-        def draw_line(self, begin, end, thickness=0.1, color=None, life_time=-1.0):
-            chamadas.append(("linha", begin, end))
-
-        def draw_string(self, location, text, draw_shadow=False, color=None, life_time=-1.0):
-            chamadas.append(("texto", text, color.r, life_time))
+        def set_transform(self, t):
+            self.transformacoes.append(t)
 
     class Mundo:
         def __init__(self):
-            self.config, self.aplicadas, self.ticks, self.debug = Configuracao(), [], 0, Debug()
-            self.clima, self.spectator, self.ator, self.sensores = Clima(), Ator(), None, []
+            self.config, self.aplicadas, self.ticks, self.tempo = Configuracao(), [], 0, 1234.5
+            self.clima, self.spectator, self.ator, self.sensores = None, Espectador(), None, []
 
         def get_settings(self):
             return copy.copy(self.config)
 
         def apply_settings(self, config):
             self.config = copy.copy(config)
-            self.aplicadas.append((config.synchronous_mode, config.fixed_delta_seconds))
+            self.aplicadas.append((config.synchronous_mode, config.fixed_delta_seconds, config.no_rendering_mode))
             chamadas.append(("apply_settings", config.synchronous_mode))
 
         def get_map(self):
@@ -386,33 +426,35 @@ def carla_falso() -> types.ModuleType:
             return Biblioteca()
 
         def try_spawn_actor(self, bp, transformacao):
-            chamadas.append(("spawn", transformacao.location.z))
-            self.ator = Ator()
+            chamadas.append(("spawn", transformacao.location.x, transformacao.location.y, transformacao.rotation.yaw))
+            self.ator = Ator(transformacao)
             return self.ator
 
         def spawn_actor(self, bp, transformacao, attach_to=None, attachment_type=AttachmentType.Rigid):
-            if mod.erro_spawn_sensor is not None:
-                raise mod.erro_spawn_sensor
-            chamadas.append(("spawn_sensor", bp.id, transformacao, attach_to, attachment_type))
+            chamadas.append(("spawn_sensor", bp.id, attach_to))
             self.sensores.append(Sensor())
             return self.sensores[-1]
 
         def get_spectator(self):
             return self.spectator
 
-        def tick(self):
-            self.ticks += 1
-            return self.ticks
-
-        def get_weather(self):
-            return self.clima
-
         def set_weather(self, clima):
             self.clima = clima
 
+        def tick(self):
+            self.ticks += 1
+            dt = self.config.fixed_delta_seconds or 0.05
+            self.tempo += dt
+            if self.ator is not None and not self.ator.destruido:
+                mod.cliente.tm.mover(self.ator, dt)
+            return self.ticks
+
+        def get_snapshot(self):
+            return Snapshot(self.ticks, self.tempo)
+
     class Client:
         def __init__(self, host, porta):
-            self.mundo = Mundo()
+            self.mundo, self.tm, self.gravando = Mundo(), None, None
             mod.cliente = self
 
         def set_timeout(self, segundos):
@@ -432,50 +474,24 @@ def carla_falso() -> types.ModuleType:
             self.mundo = Mundo()
             return self.mundo
 
+        def get_trafficmanager(self, porta=8000):
+            self.tm = TrafficManager(porta)
+            return self.tm
+
+        def start_recorder(self, nome, additional_data=False):
+            chamadas.append(("gravar", nome, additional_data))
+            self.gravando = nome
+            return nome
+
+        def stop_recorder(self):
+            chamadas.append(("parar_gravacao",))
+            self.gravando = None
+
     for nome, valor in list(locals().items()):
         if isinstance(valor, type):
             setattr(mod, nome, valor)
     mod.chamadas, mod.blueprint, mod.blueprint_camera = chamadas, Blueprint(), BlueprintCamera()
-    mod.erro_spawn_sensor = None  # exceção a levantar ao criar a câmera (teste de falha)
     return mod
-
-
-def test_mundo_carla_impoe_a_pose_marca_os_problemas_e_restaura_o_simulador(monkeypatch):
-    carla = carla_falso()
-    monkeypatch.setitem(sys.modules, "carla", carla)
-    cfg = carregar_yaml("config/simulacao.yaml")
-    dados = volta_no_estadio(12.0)
-    dados["sun_altitude"] = 46.2
-    trajeto = Trajeto.de_poses(alinhar(ler_xodr(pista_estadio_xodr(), 0.5), dados, SEM_ICP).poses)
-
-    mundo = MundoCarla(cfg)
-    mundo.conectar()
-    mundo.preparar(trajeto, "<OpenDRIVE/>", dados)
-    gerar = [c for c in carla.chamadas if c[0] == "gerar"]
-    assert len(gerar) == 1 and gerar[0][1] == "<OpenDRIVE/>" and gerar[0][2].wall_height == 0.0
-    world = carla.cliente.mundo
-    assert world.aplicadas == [(True, 0.05)] and world.clima.sun_altitude_angle == pytest.approx(46.2)
-    ator = world.ator
-    assert not ator.fisica and carla.blueprint.atributos["role_name"] == "mover_gemeo"
-
-    for i in (1, 2, 3):
-        mundo.aplicar(i)
-        mundo.avancar()
-    ultima = ator.transformacoes[-1]
-    assert (ultima.location.x, ultima.location.y) == (trajeto.x[3], trajeto.y[3])
-    assert ultima.location.z == pytest.approx(1.5 - 0.2 + 0.05)  # asfalto - fundo da caixa + folga
-    assert ultima.rotation.yaw == trajeto.yaw[3] and ultima.rotation.pitch == 0.0  # pista plana
-    camera = world.spectator.transformacoes[-1]
-    assert camera.location.z == pytest.approx(1.5 + 8) and camera.rotation.pitch == -20
-
-    mundo.marcar_problemas([(100, {"nivel": "critico", "t_pico": 5.0, "evento": "frenagem_brusca",
-                                   "causa": "conducao_brusca", "fatos": {"jerk_max_abs_mps3": 9.5}})])
-    texto = [c for c in carla.chamadas if c[0] == "texto"][0]
-    assert texto[1].startswith("CRITICO 5.0s | frenagem brusca") and texto[2] == 255 and texto[3] == 12.0
-
-    mundo.encerrar()
-    assert world.aplicadas[-1] == (False, None) and ator.destruido  # volta ao modo assíncrono
-    mundo.encerrar()  # idempotente
 
 
 def esperar(condicao, prazo_s: float = 5.0) -> None:
@@ -493,104 +509,113 @@ class ImagemFalsa:
         self.width, self.height, self.raw_data = largura, altura, bgra_azul(largura, altura)
 
 
-def _mundo_com_camera(monkeypatch, enviar, cfg_extra: dict[str, Any] | None = None):
+def _simulador(monkeypatch, voltas: int = 1, enviar=None):
+    from mover.autonomo.carla_tm import SimuladorCarla
+
     carla = carla_falso()
     monkeypatch.setitem(sys.modules, "carla", carla)
-    cfg = carregar_yaml("config/simulacao.yaml")
-    cfg["camera_painel"] = {**cfg.get("camera_painel", {}), **(cfg_extra or {})}
-    trajeto = Trajeto.de_poses(alinhar(ler_xodr(pista_estadio_xodr(), 0.5), volta_no_estadio(12.0), SEM_ICP).poses)
-    mundo = MundoCarla(cfg)
-    mundo.conectar()
-    mundo.ligar_camera_painel(enviar)
-    mundo.preparar(trajeto, "<OpenDRIVE/>", volta_no_estadio(12.0))
-    return carla, mundo
+    plano = plano_estadio()
+    sim = SimuladorCarla(plano.rota, carregar_yaml("config/simulacao.yaml"), None, 0.05, "<OpenDRIVE/>", voltas=voltas)
+    if enviar is not None:
+        sim.ligar_camera_painel(enviar)
+    sim.iniciar()
+    return carla, plano, sim
 
 
-def test_camera_do_painel_presa_ao_caminhao_manda_jpeg_e_sai_antes_do_caminhao(monkeypatch, caplog):
+def test_simulador_carla_liga_o_piloto_automatico_le_a_telemetria_e_restaura_o_simulador(monkeypatch, tmp_path):
+    carla, plano, sim = _simulador(monkeypatch)
+    gerar = [c for c in carla.chamadas if c[0] == "gerar"]
+    assert len(gerar) == 1 and gerar[0][1] == "<OpenDRIVE/>" and gerar[0][2].wall_height == 0.0
+    world, tm = carla.cliente.mundo, carla.cliente.tm
+    assert world.aplicadas[0] == (True, 0.05, False) and world.clima == "ClearNoon"
+    assert tm.porta == 8100 and tm.sincrono  # a 8000 é do servidor da página
+    ator = world.ator
+    assert ator.autopiloto == (True, 8100) and ator.controles[0].hand_brake and not ator.controles[-1].hand_brake
+    assert (tm.ajustes["troca_faixa"], tm.ajustes["semaforos"], tm.ajustes["placas"]) == (False, 100.0, 100.0)
+    _, x, y, yaw = next(c for c in carla.chamadas if c[0] == "spawn")
+    p0 = plano.rota.ponto(0.0)
+    assert (x, y, yaw) == pytest.approx((p0.x, -p0.y, -math.degrees(p0.rumo)), abs=1e-6)  # y e yaw do CARLA invertidos
+    n_pontos = next(c[1] for c in carla.chamadas if c[0] == "caminho")
+    assert n_pontos == math.ceil((plano.comprimento + 30.0 - 8.0) / 10.0)  # caminho da largada até a chegada
+
+    linhas = [sim.passo(5.0) for _ in range(60)]  # 3 s pedindo 18 km/h
+    assert tm.desejada[ator.id] == pytest.approx(18.0)
+    ultima = linhas[-1]
+    assert ultima["sim_time"] == pytest.approx(3.0) and ultima["fonte"] == "carla"
+    assert ultima["speed_mps"] == pytest.approx(5.0, abs=0.05) and ultima["acc_long"] == pytest.approx(0.0, abs=0.1)
+    andado = sum(l["speed_mps"] for l in linhas) * 0.05
+    assert ultima["d"] == pytest.approx(andado, abs=0.5) and abs(ultima["desvio_m"]) < 0.3  # o caminho do TM é a rota
+    assert {"x", "y", "rumo_graus", "x_carla", "yaw_carla", "throttle", "brake", "steer", "volta", "rampa"} <= set(ultima)
+    assert world.spectator.transformacoes  # a janela do CARLA segue o caminhão
+
+    caminho = sim.gravar(tmp_path / "corrida" / "gravacao_carla.log")
+    assert Path(caminho).is_absolute() and ("gravar", caminho, True) in carla.chamadas
+    inicio = len(carla.chamadas)
+    sim.encerrar()
+    ordem = [c[0] for c in carla.chamadas[inicio:]]
+    # gravador, CARLA de volta ao modo assíncrono, TM idem, e só então o caminhão sai
+    assert ordem == ["parar_gravacao", "apply_settings", "tm_sincrono", "autopiloto", "destruir_ator"]
+    assert world.aplicadas[-1][0] is False and ator.destruido
+    sim.encerrar()  # idempotente
+    assert len(carla.chamadas) == inicio + len(ordem) + 1  # só o tm_sincrono de novo
+
+
+def test_corrida_completa_no_carla_falso_para_na_chegada(monkeypatch):
+    from mover.autonomo.conducao import Conducao, OpcoesConducao
+    from mover.autonomo.montagem import montar
+
+    carla, plano, sim = _simulador(monkeypatch)
+    m = montar(carregar_yaml("config/autonomo.yaml"), plano=plano)
+    res = Conducao(plano, sim, m.governador("bruto", 1), None, OpcoesConducao(voltas=1, sem_espera=True)).rodar()
+    sim.encerrar()
+    assert res.completa and res.simulador == "carla"
+    assert res.linhas[-1]["d"] == pytest.approx(plano.comprimento, abs=10.0) and res.linhas[-1]["speed_mps"] < 0.06
+    assert min(l["speed_mps"] for l in res.linhas if abs(l["d"] - 200.0) < 6.0) < 0.05  # parou na portaria
+
+
+def test_camera_do_painel_presa_ao_caminhao_manda_jpeg_e_sai_antes_do_caminhao(monkeypatch):
     from PIL import Image
 
     quadros: list[bytes] = []
-    carla, mundo = _mundo_com_camera(monkeypatch, quadros.append)
+    carla, _, sim = _simulador(monkeypatch, enviar=quadros.append)
     world = carla.cliente.mundo
-    camera = mundo.camera_painel
+    camera = sim.camera_painel
     assert camera is not None and len(world.sensores) == 1
-    assert carla.blueprint_camera.atributos == {"image_size_x": "640", "image_size_y": "360", "fov": "90.0",
-                                                "sensor_tick": "0.100"}  # 10 fps em tempo de simulação
-    _, bp_id, posicao, preso_a, tipo = next(c for c in carla.chamadas if c[0] == "spawn_sensor")
-    assert bp_id == "sensor.camera.rgb" and preso_a is world.ator and tipo == carla.AttachmentType.Rigid
-    loc, rot = posicao.location, posicao.rotation
-    assert (loc.x, loc.y, loc.z, rot.pitch) == (-12.0, 0.0, 5.0, -15.0)  # 12 m atrás e 5 m acima
+    _, bp_id, preso_a = next(c for c in carla.chamadas if c[0] == "spawn_sensor")
+    assert bp_id == "sensor.camera.rgb" and preso_a is world.ator
     sensor = world.sensores[0]
-    assert sensor.is_listening()
-
-    sensor.callback(ImagemFalsa(64, 36))  # a thread do cliente do CARLA entrega um quadro
+    sensor.callback(ImagemFalsa(64, 36))
     esperar(lambda: camera.enviados == 1)
     imagem = Image.open(io.BytesIO(quadros[0]))
-    assert quadros[0].startswith(b"\xff\xd8") and imagem.size == (64, 36) and imagem.getpixel((32, 18))[2] > 220
-
-    def servidor_fora(jpeg: bytes) -> None:
-        raise ConnectionError("servidor fora do ar")
-
-    camera.enviar = servidor_fora  # falha ao mandar: só um aviso, o replay continua
-    with caplog.at_level(logging.WARNING, logger="mover.simulacao"):
-        sensor.callback(ImagemFalsa(64, 36))
-        esperar(lambda: "Falha ao mandar o quadro da câmera" in caplog.text)
-    assert (camera.recebidos, camera.enviados, len(quadros)) == (2, 1, 1)
-
+    assert quadros[0].startswith(b"\xff\xd8") and imagem.size == (64, 36)
     inicio = len(carla.chamadas)
-    mundo.encerrar()
+    sim.encerrar()
     ordem = [c[0] for c in carla.chamadas[inicio:]]
-    # o CARLA volta ao modo assíncrono primeiro; a câmera sai antes do caminhão a que está presa
-    assert ordem == ["apply_settings", "parar_sensor", "destruir_sensor", "destruir_ator"]
-    assert mundo.camera_painel is None and sensor.destruido and not sensor.is_listening()
-    mundo.encerrar()  # idempotente
-    camera.encerrar()
-    assert len(carla.chamadas) == inicio + 4
+    assert ordem.index("destruir_sensor") < ordem.index("destruir_ator") and not sensor.is_listening()
 
 
-def test_replay_segue_sem_a_camera_do_painel_se_ela_falhar_ou_estiver_desligada(monkeypatch, caplog):
-    carla = carla_falso()
-    carla.erro_spawn_sensor = RuntimeError("blueprint sensor.camera.rgb indisponível")
-    monkeypatch.setitem(sys.modules, "carla", carla)
-    cfg = carregar_yaml("config/simulacao.yaml")
-    trajeto = Trajeto.de_poses(alinhar(ler_xodr(pista_estadio_xodr(), 0.5), volta_no_estadio(12.0), SEM_ICP).poses)
-    mundo = MundoCarla(cfg)
-    mundo.conectar()
-    mundo.ligar_camera_painel(lambda jpeg: None)
-    with caplog.at_level(logging.WARNING, logger="mover.simulacao"):
-        mundo.preparar(trajeto, "<OpenDRIVE/>", volta_no_estadio(12.0))
-    assert mundo.camera_painel is None and "Câmera do painel desligada" in caplog.text
-    world = carla.cliente.mundo
-    assert world.ator is not None and world.ticks == 1  # o caminhão foi criado e o replay começou
-    mundo.aplicar(1)
-    mundo.encerrar()
-    assert world.ator.destruido
+def test_cliente_do_painel_manda_cena_telemetria_e_quadros(tmp_path):
+    from mover.autonomo.cliente import ClientePainel, ErroServidor
+    from mover.interface.cena import montar_cena
 
-    _, mundo = _mundo_com_camera(monkeypatch, lambda jpeg: None, {"ativa": False})
-    assert mundo.camera_painel is None and not sys.modules["carla"].cliente.mundo.sensores
-    mundo.encerrar()
-
-
-def test_cliente_manda_a_cena_e_os_quadros_da_camera_ao_servidor(tmp_path):
     cfg = carregar_yaml("config/agentes.yaml")
-    dados = volta_no_estadio(12.0)
-    mapa = ler_xodr(pista_estadio_xodr(), 0.5)
-    cena = montar_cena(mapa, alinhar(mapa, dados, SEM_ICP))
-    cfg_sim = {"servidor": {"pasta_sessoes": str(tmp_path)}, "mapa": {"arquivo": str(tmp_path / "nao_existe.xodr")}}
-    app = criar_app(cfg, cfg_sim, telemetria=dados, fabrica_supervisor=lambda opcoes: Supervisor(FalsoLLM(), cfg),
-                    sem_ml=True, fabrica_llm_chat=lambda opcoes: FalsoLLM())
+    app = criar_app(cfg, {"servidor": {"pasta_sessoes": str(tmp_path)}, "mapa": {"arquivo": str(tmp_path / "x.xodr")}},
+                    fabrica_supervisor=lambda opcoes: Supervisor(FalsoLLM(), cfg),
+                    fabrica_llm_chat=lambda opcoes: FalsoLLM(), cfg_autonomo={"missao": {"arquivo": str(tmp_path / "x.yaml")}})
+    plano = plano_estadio()
     with TestClient(app) as http:
-        cliente = ClienteAgentes(http)
-        assert http.get("/cena").status_code == 404  # sem mapa no config: só a cena mandada pelo replay
-        assert cliente.enviar_cena(cena) is True
-        assert http.get("/cena").json()["origem"] == "replay"
-        ruim = copy.deepcopy(cena)
-        ruim["trajeto"]["x"].pop()
-        assert cliente.enviar_cena(ruim) is False  # 422: só um aviso, a cena boa continua lá
-        assert len(http.get("/cena").json()["trajeto"]["x"]) == len(cena["trajeto"]["x"])
-
+        cliente = ClientePainel(http, em_segundo_plano=False)
+        assert http.get("/cena").status_code == 404
+        assert cliente.enviar_cena(montar_cena(plano)) is True
+        assert http.get("/cena").json()["origem"] == "piloto"
+        assert cliente.enviar_cena({"rota": {}}) is False  # 422: só um aviso
+        cliente.abrir_sessao({"modo": "bruto", "voltas": 1, "logs_medidos": False})
+        cliente.enviar_telemetria([{"t": 0.05, "sim_time": 0.05, "x": 0.0, "y": 0.0, "d": 0.1, "speed_kmh": 1.0}])
+        assert cliente.lotes_enviados == 1 and http.get("/saude").json()["sessao"]["modo"] == "bruto"
         cliente.postar_quadro(codificar_jpeg(bgra_azul(32, 16), 32, 16))
         assert http.get("/camera/info").json()["quadros"] == 1
         with pytest.raises(ErroServidor, match="HTTP 400"):
             cliente.postar_quadro(b"isto nao e um jpeg")
+        fim = cliente.encerrar_sessao({"motivo_fim": "chegada"})
+        assert fim["resumo"]["piloto"] == {"motivo_fim": "chegada"}
         cliente.fechar()

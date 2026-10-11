@@ -4,7 +4,12 @@
 # =============================================================================
 
 entrada:
-  telemetria: data/tratado/telemetria_tratada.csv   # saída da etapa de tratamento
+  # Dados da análise offline (rodar_agentes) e do treino do especialista de ML da camada de logs:
+  #   corrida -> a corrida mais recente em pasta_corridas (telemetria.csv gravada pelo dirigir);
+  #   ou o caminho de um CSV (no legado, a gravação tratada do Sensor Logger).
+  # Ao vivo (página), a camada de logs recebe a telemetria do simulador tick a tick.
+  telemetria: corrida
+  pasta_corridas: data/autonomo/corridas
   taxa_hz: 20
 
 blocos:
@@ -49,8 +54,8 @@ especialista_ml:
   contaminacao: 0.05         # como na POC: ~5 % dos quadros são tratados como anômalos
   n_arvores: 200
   semente: 42
-  # Janela atípica se >= 10 % dos quadros (0,5 s em 5 s) forem anômalos. Nesta volta, as
-  # passagens por lombadas dão 7-19 % por janela e as curvas fechadas, 26-30 %.
+  # Treinado com a corrida analisada (rodar_agentes retreina quando ela muda). Janela atípica se
+  # >= 10 % dos quadros (0,5 s em 5 s) forem anômalos.
   fracao_atipica: 0.10
 
 supervisor:
@@ -112,9 +117,10 @@ conhecimento:
     acao: chegar mais devagar e atravessar a irregularidade sem frear nem acelerar
 
 eventos_sinteticos:
-  # Usados só com --injetar-eventos. As linhas alteradas recebem fonte = sintetico.
-  # Mudam acc_long, jerk_long, acc_x/acc_y, imu_acc_x, comandos estimados e manobra;
-  # a velocidade e a pose continuam as reais (o replay segue a trajetória gravada).
+  # LEGADO (fora do fluxo do gêmeo digital): só com --entrada <telemetria tratada do Sensor
+  # Logger> --injetar-eventos. Uma corrida sem agentes já traz as decisões bruscas do caminhão.
+  # As linhas alteradas recebem fonte = sintetico; mudam acc_long, jerk_long, acc_x/acc_y,
+  # imu_acc_x, comandos estimados e manobra.
   - tempo_s: 75
     tipo: frenagem_brusca
     intensidade_mps2: 3.5

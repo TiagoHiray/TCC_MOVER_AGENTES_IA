@@ -1,4 +1,6 @@
-"""Alinhamento da volta gravada às vias do mapa OpenDRIVE (não precisa do CARLA).
+"""LEGADO: alinhamento da volta gravada às vias do mapa OpenDRIVE (não precisa do CARLA).
+
+Fora do fluxo do gêmeo digital, em que a rota sai só do mapa (mover.autonomo.rota_mapa).
 
 1. Georreferência: projeta (gnss_lat, gnss_lon) da telemetria com o geoReference do mapa e
    aplica o <offset> do header. O sinal do offset muda de um conversor para outro (Osm2Odr do

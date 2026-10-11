@@ -239,3 +239,22 @@ def volta_suave_na_quina(angulo_graus: float, lateral_m: float, raio_m: float = 
     dados["yaw"] = -np.degrees(h)
     dados["frame"] = np.arange(len(dados))
     return dados
+
+
+# ---------------------------------------------------------------------------------------------
+# Plano de missão no estádio (corrida autônoma)
+# ---------------------------------------------------------------------------------------------
+def plano_estadio(cruzeiro_kmh: float = 30.0):
+    """Volta de ~246 m no centro da faixa do estádio, com duas lombadas, uma curva e uma parada."""
+    from mover.autonomo.missao import Parada, PlanoMissao, Zona
+    from mover.autonomo.rota import Rota
+
+    perimetro = 2 * RETA_M + 2 * math.pi * RAIO_M
+    s = np.arange(0.0, perimetro, 1.0)
+    x, y, _ = centro_da_faixa(s)
+    rota = Rota(x, y, passo_m=1.0, suavizar_m=2.0)
+    zonas = [Zona("lombada_1", "lombada", 30.0, 42.0, 10.0, "lombada 1"),
+             Zona("curva_1", "curva", 62.0, 120.0, 18.0, "curva 1"),
+             Zona("lombada_2", "lombada", 150.0, 162.0, 10.0, "lombada 2")]
+    paradas = [Parada("portao_1", 200.0, 2.0, "portão 1")]
+    return PlanoMissao(rota, cruzeiro_kmh, zonas, paradas, mapa="", sentido="anti-horário")

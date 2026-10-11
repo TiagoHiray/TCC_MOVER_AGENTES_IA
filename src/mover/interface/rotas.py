@@ -1,10 +1,10 @@
-"""Rotas da interface (Etapa 4): página dos 4 painéis, câmera do CARLA, cena 2D e chat sobre o log.
+"""Rotas da interface: página dos 4 painéis, câmera do CARLA, cena 2D e chat sobre o log.
 
     GET  /                  -> página (interface/estatico/index.html)
     GET  /estatico/...      -> JS e CSS da página (sem build, sem CDN)
-    PUT  /cena              -> o replay manda as vias do mapa e o trajeto alinhado (referencial do mapa)
-    GET  /cena              -> a cena; sem PUT, é calculada uma vez a partir do config/simulacao.yaml
-    POST /camera            -> o replay manda um quadro JPEG da câmera de perseguição (corpo image/jpeg)
+    PUT  /cena              -> o piloto manda as vias do mapa, a rota, as zonas e as paradas do plano de missão
+    GET  /cena              -> a cena; sem PUT, é montada uma vez a partir do config/autonomo.yaml e do mapa
+    POST /camera            -> o piloto manda um quadro JPEG da câmera de perseguição do CARLA (corpo image/jpeg)
     GET  /camera/info       -> quadros recebidos e idade do último (a página escolhe câmera ou mapa 2D)
     GET  /camera.jpg        -> último quadro
     GET  /camera.mjpg       -> transmissão MJPEG (multipart/x-mixed-replace), usada num <img>
@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
-from mover.interface.cena import cena_do_yaml
+from mover.interface.cena import cena_do_config
 from mover.interface.chat import ServicoChat
 
 log = logging.getLogger("mover.interface")
@@ -71,24 +71,47 @@ class ViaModelo(BaseModel):
     pontos: list[tuple[float, float]]
 
 
-class TrajetoModelo(BaseModel):
-    t: list[float]
+class RotaModelo(BaseModel):
+    comprimento_m: float
+    s: list[float]
     x: list[float]
     y: list[float]
-    rumo_graus: list[float]
 
     @model_validator(mode="after")
-    def mesmo_tamanho(self) -> "TrajetoModelo":
-        if not len(self.t) == len(self.x) == len(self.y) == len(self.rumo_graus):
-            raise ValueError("t, x, y e rumo_graus precisam ter o mesmo tamanho")
+    def mesmo_tamanho(self) -> "RotaModelo":
+        if not len(self.s) == len(self.x) == len(self.y):
+            raise ValueError("s, x e y da rota precisam ter o mesmo tamanho")
         return self
+
+
+class ZonaModelo(BaseModel):
+    id: str
+    tipo: str
+    nome: str = ""
+    s_ini: float
+    s_fim: float
+    v_max_kmh: float
+    pontos: list[tuple[float, float]] = Field(default_factory=list)
+
+
+class ParadaModelo(BaseModel):
+    id: str
+    nome: str = ""
+    s: float
+    duracao_s: float = 0.0
+    x: float
+    y: float
 
 
 class CenaModelo(BaseModel):
     referencial: str = "mapa OpenDRIVE (x = leste, y = norte, metros)"
-    origem: str = "replay"
-    vias: list[ViaModelo]
-    trajeto: TrajetoModelo
+    origem: str = "piloto"
+    vias: list[ViaModelo] = Field(default_factory=list)
+    rota: RotaModelo
+    largada: dict[str, float] | None = None
+    sentido: str = ""
+    zonas: list[ZonaModelo] = Field(default_factory=list)
+    paradas: list[ParadaModelo] = Field(default_factory=list)
     limites: tuple[float, float, float, float]
 
 
@@ -103,7 +126,8 @@ class PerguntaModelo(BaseModel):
 
 
 def instalar_interface(app: FastAPI, estado: dict[str, Any], cfg_agentes: dict[str, Any], cfg_simulacao: dict[str, Any],
-                       fabrica_llm_chat: Callable[[Any], Any] | None = None) -> None:
+                       fabrica_llm_chat: Callable[[Any], Any] | None = None,
+                       cfg_autonomo: dict[str, Any] | None = None) -> None:
     """Pendura no app as rotas da interface e os arquivos estáticos."""
     camera = QuadroCamera()
     chat = ServicoChat(cfg_agentes, fabrica_llm_chat)
@@ -120,7 +144,8 @@ def instalar_interface(app: FastAPI, estado: dict[str, Any], cfg_agentes: dict[s
     @rotas.put("/cena", status_code=204)
     async def receber_cena(dados: CenaModelo) -> None:
         cena["dados"], cena["erro"] = dados.model_dump(), None
-        log.info("Cena recebida (%s): %d vias, %d poses.", dados.origem, len(dados.vias), len(dados.trajeto.t))
+        log.info("Cena recebida (%s): %d vias, rota de %.0f m, %d zonas e %d paradas.", dados.origem, len(dados.vias),
+                 dados.rota.comprimento_m, len(dados.zonas), len(dados.paradas))
 
     @rotas.get("/cena")
     async def ver_cena() -> dict[str, Any]:
@@ -128,9 +153,9 @@ def instalar_interface(app: FastAPI, estado: dict[str, Any], cfg_agentes: dict[s
             if cena["dados"] is None and not cena["tentou_yaml"]:
                 cena["tentou_yaml"] = True
                 try:
-                    cena["dados"] = await asyncio.to_thread(cena_do_yaml, cfg_simulacao)
-                except (SystemExit, Exception) as erro:  # alinhar_volta sai com SystemExit se faltar o mapa
-                    cena["erro"] = f"cena indisponível até o replay mandá-la ({type(erro).__name__}: {erro})"[:300]
+                    cena["dados"] = await asyncio.to_thread(cena_do_config, cfg_simulacao, cfg_autonomo or {})
+                except (SystemExit, Exception) as erro:  # plano de missão ou mapa ausente
+                    cena["erro"] = f"cena indisponível até o piloto mandá-la ({type(erro).__name__}: {erro})"[:300]
                     log.info("%s", cena["erro"])
         if cena["dados"] is None:
             raise HTTPException(404, {"mensagem": cena["erro"] or "cena indisponível"})

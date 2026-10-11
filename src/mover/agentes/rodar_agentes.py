@@ -1,15 +1,24 @@
-"""Roda a camada agêntica sobre a telemetria tratada e grava o log em JSONL.
+"""Análise offline da camada de logs sobre uma corrida já feita, gravada em JSONL.
+
+Lê o telemetria.csv de uma corrida (data/autonomo/corridas/<id>/, gravada por
+python -m mover.autonomo.dirigir) e roda a camada de logs (especialista de jerk, especialista de ML e
+Supervisor com o LLM) bloco a bloco de 10 s, sem abrir o simulador: os mesmos logs e problemas que a
+página publica ao vivo, para estudar a corrida e testar o LLM. Numa corrida sem agentes
+(--sem-agentes), aparecem as decisões bruscas do caminhão sozinho; com agentes, elas devem sumir.
 
 Uso, a partir da pasta src/ do repositório:
-    python -m mover.agentes.rodar_agentes                      # provedor do .env/YAML (padrão: Ollama gemma2:2b)
+    python -m mover.agentes.rodar_agentes                      # a corrida mais recente
+    python -m mover.agentes.rodar_agentes --corrida ../data/autonomo/corridas/<id>
     python -m mover.agentes.rodar_agentes --provedor falso     # sem LLM (texto-modelo), para testes
-    python -m mover.agentes.rodar_agentes --injetar-eventos    # soma frenagem e arrancada sintéticas
     python -m mover.agentes.rodar_agentes --tempo-real --fator-tempo 5   # cada bloco de 10 s dura 2 s
+
+Legado, fora do fluxo do gêmeo digital: --entrada data/tratado/telemetria_tratada.csv lê a gravação
+tratada do Sensor Logger, e só com ela vale --injetar-eventos (eventos sintéticos de teste).
 
 Cada linha do JSONL é uma entrada: tipo (log | problema), bloco, t_ini/t_fim, hora_local,
 nivel (info | atencao | critico), causa, evento, texto, diagnostico, acao, fatos, autor,
-texto_origem (llm | modelo), provedor, latencia_s, observacao, fonte (real | sintetico | misto),
-continuacao e mesclado_desde.
+texto_origem (llm | modelo), provedor, latencia_s, observacao, fonte (carla | substituto, ou
+real | sintetico | misto no legado), continuacao e mesclado_desde.
 """
 
 from __future__ import annotations
@@ -34,12 +43,14 @@ from mover.agentes.executor import ExecutorBlocos, ResultadoBloco
 from mover.agentes.grafo import CamadaAgentica
 from mover.agentes.llm import PROVEDORES, criar_llm
 from mover.agentes.supervisor import Supervisor
+from mover.agentes.telemetria_viva import para_agentes
 from mover.agentes.textos import num
 from mover.config import caminho, carregar_yaml
 
 log = logging.getLogger("mover.agentes")
 
 ROTULO_NIVEL = {"info": "INFO", "atencao": "ATENÇÃO", "critico": "CRÍTICO"}
+FONTES_SINTETICAS = ("sintetico", "misto")  # legado: trechos com eventos injetados
 
 
 def formatar_entrada(e: dict[str, Any]) -> str:
@@ -49,7 +60,7 @@ def formatar_entrada(e: dict[str, Any]) -> str:
     else:
         quando, tipo = f"{num(e['t_pico'], 1)} s", "PROBLEMA"
     origem = "LLM" if e["texto_origem"] == "llm" else "modelo"
-    sintetico = " [SINTÉTICO]" if e["fonte"] != "real" else ""
+    sintetico = " [SINTÉTICO]" if e["fonte"] in FONTES_SINTETICAS else ""
     return (f"#{e['id']:03d} bloco {e['bloco']:02d} {e['hora_local']} {quando:>13} "
             f"{ROTULO_NIVEL[e['nivel']]:<8} {tipo:<8} {e['texto']}{sintetico} ({origem})")
 
@@ -61,7 +72,7 @@ def _json_padrao(valor: Any) -> Any:
 
 
 def aplicar_eventos_sinteticos(cfg: dict[str, Any], df: pd.DataFrame) -> pd.DataFrame:
-    """Devolve uma cópia da telemetria com os eventos sintéticos do YAML (fonte=sintetico)."""
+    """Legado: cópia da telemetria tratada do Sensor Logger com os eventos sintéticos do YAML."""
     trat = carregar_yaml("config/tratamento.yaml") if caminho("config/tratamento.yaml").exists() else {}
     return injetar(
         df, cfg["eventos_sinteticos"], trat.get("veiculo", {}),
@@ -71,34 +82,85 @@ def aplicar_eventos_sinteticos(cfg: dict[str, Any], df: pd.DataFrame) -> pd.Data
     )
 
 
-def carregar_telemetria(cfg: dict[str, Any], entrada: str | None, injetar_eventos: bool) -> pd.DataFrame:
+PASTA_CORRIDAS = "data/autonomo/corridas"
+
+
+def usa_corrida(cfg: dict[str, Any], entrada: str | None, corrida: str | None) -> bool:
+    """A análise lê uma corrida (padrão: a mais recente), a não ser que --entrada ou o YAML apontem um CSV."""
+    if corrida:
+        return True
+    valor = entrada or str((cfg.get("entrada") or {}).get("telemetria", "corrida"))
+    return valor.strip().lower() == "corrida"
+
+
+def achar_corrida(explicita: str | None = None, pasta_corridas: str = PASTA_CORRIDAS) -> Path:
+    """A pasta da corrida dada ou a da mais recente em data/autonomo/corridas."""
+    if explicita:
+        pasta = Path(explicita) if Path(explicita).exists() else caminho(explicita)
+        if not (pasta / "telemetria.csv").is_file():
+            raise SystemExit(f"Corrida sem telemetria.csv: {pasta}")
+        return pasta
+    raiz = Path(pasta_corridas) if Path(pasta_corridas).is_absolute() else caminho(pasta_corridas)
+    corridas = sorted(p for p in raiz.glob("*") if (p / "telemetria.csv").is_file())
+    if not corridas:
+        raise SystemExit(f"Nenhuma corrida em {raiz}. Rode antes uma volta: python -m mover.autonomo.dirigir --sem-painel")
+    return corridas[-1]
+
+
+def carregar_telemetria(cfg: dict[str, Any], entrada: str | None = None, injetar_eventos: bool = False,
+                        corrida: str | None = None) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """A telemetria da análise, no formato da camada de logs, e a sua origem."""
+    taxa_hz = float(cfg["entrada"]["taxa_hz"])
+    if usa_corrida(cfg, entrada, corrida):
+        if injetar_eventos:
+            raise SystemExit("--injetar-eventos só vale com --entrada (telemetria tratada do Sensor Logger, legado). "
+                             "Uma corrida sem agentes já traz as decisões bruscas do caminhão sozinho.")
+        pasta = achar_corrida(corrida, str((cfg.get("entrada") or {}).get("pasta_corridas", PASTA_CORRIDAS)))
+        df = para_agentes(pd.read_csv(pasta / "telemetria.csv"), taxa_hz)
+        arquivo_resumo = pasta / "resumo.json"
+        resumo = json.loads(arquivo_resumo.read_text(encoding="utf-8")) if arquivo_resumo.is_file() else {}
+        origem = {"tipo": "corrida", "corrida": pasta.name, "simulador": resumo.get("simulador"),
+                  "modo": resumo.get("modo"), "voltas": resumo.get("voltas")}
+        log.info("Corrida: %s (%s, modo %s, %d linhas, %.1f s)", pasta.name, resumo.get("simulador", "?"),
+                 resumo.get("modo", "?"), len(df), df["sim_time"].iloc[-1] - df["sim_time"].iloc[0])
+        return df, origem
+
     arquivo = caminho(entrada or cfg["entrada"]["telemetria"])
     if not arquivo.exists():
-        raise SystemExit(f"Telemetria não encontrada: {arquivo}. Rode antes: python -m mover.tratamento.tratar_dados")
+        raise SystemExit(f"Telemetria não encontrada: {arquivo}")
     df = pd.read_csv(arquivo)
+    convertida = "jerk_long" not in df.columns  # telemetria crua de uma corrida do simulador
+    if convertida:
+        if injetar_eventos:
+            raise SystemExit("--injetar-eventos só vale para a telemetria tratada do Sensor Logger (legado).")
+        df = para_agentes(df, taxa_hz)
+    origem = {"tipo": "corrida" if convertida else "csv", "arquivo": str(arquivo)}
     log.info("Telemetria: %s (%d linhas, %.1f s)", arquivo, len(df), df["sim_time"].iloc[-1] - df["sim_time"].iloc[0])
     if not injetar_eventos:
-        return df
+        return df, origem
     df = aplicar_eventos_sinteticos(cfg, df)
     destino = caminho(cfg["saida"]["pasta"]) / cfg["saida"]["telemetria_com_eventos"]
     destino.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(destino, index=False)
     log.info("Telemetria com eventos sintéticos gravada em %s", destino)
-    return df
+    return df, {**origem, "eventos_sinteticos": True}
 
 
-def carregar_especialista_ml(cfg: dict[str, Any], desligar: bool):
+def carregar_especialista_ml(cfg: dict[str, Any], desligar: bool, telemetria: pd.DataFrame | None = None,
+                             origem: dict[str, Any] | None = None):
+    """O especialista de ML, treinado com os mesmos dados analisados (retreina se a corrida mudou)."""
     cm = cfg["especialista_ml"]
     if desligar or not cm.get("ativo", True):
         return None
     from mover.agentes.especialistas import EspecialistaML
+    from mover.agentes.treinar_especialista_ml import ler_metadados, treinar
 
     arquivo = caminho(cm["modelo"])
-    if not arquivo.exists():
-        from mover.agentes.treinar_especialista_ml import treinar
-
-        log.info("Modelo de ML não encontrado; treinando agora com a telemetria real.")
-        treinar(cfg)
+    alvo = (origem or {}).get("corrida")
+    treinado_com = ler_metadados(arquivo).get("corrida")
+    if not arquivo.exists() or (alvo and treinado_com != alvo):
+        log.info("Treinando o especialista de ML com %s.", f"a corrida {alvo}" if alvo else "a telemetria analisada")
+        treinar(cfg, saida=arquivo, dados=telemetria, origem=origem)
     return EspecialistaML.carregar(arquivo, float(cm["fracao_atipica"]))
 
 
@@ -142,19 +204,23 @@ def resumir(resultados: list[ResultadoBloco], supervisor: Supervisor, duracao_bl
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Roda a camada agêntica (logs + problemas de jerk).")
+    parser = argparse.ArgumentParser(description="Análise offline da camada de logs sobre uma corrida já feita.")
     parser.add_argument("--config", default="config/agentes.yaml", help="YAML da camada agêntica")
-    parser.add_argument("--entrada", help="CSV de telemetria tratada (padrão: YAML)")
+    parser.add_argument("--corrida", help="pasta da corrida (padrão: a mais recente em data/autonomo/corridas)")
+    parser.add_argument("--entrada", help="em vez de uma corrida, um CSV (no legado, a telemetria tratada)")
     parser.add_argument("--saida", help="arquivo JSONL do log (padrão: YAML)")
     parser.add_argument("--provedor", choices=PROVEDORES, help="provedor do LLM (padrão: .env ou YAML)")
     parser.add_argument("--modelo", help="nome do modelo no provedor (padrão: .env ou YAML)")
-    parser.add_argument("--injetar-eventos", action="store_true", help="soma os eventos sintéticos do YAML")
+    parser.add_argument("--injetar-eventos", action="store_true",
+                        help="legado: soma os eventos sintéticos do YAML à telemetria tratada do Sensor Logger")
     parser.add_argument("--sem-ml", action="store_true", help="desliga o especialista de ML")
     parser.add_argument("--tempo-real", action="store_true", help="cada bloco dura o seu tempo de relógio")
     parser.add_argument("--fator-tempo", type=float, default=1.0, help="acelera o tempo real (2 = 2x mais rápido)")
     parser.add_argument("--silencioso", action="store_true", help="não imprime cada entrada")
     parser.add_argument("--depurar", action="store_true", help="mostra os prompts e as respostas do Supervisor")
     args = parser.parse_args(argv)
+    if args.corrida and args.entrada:
+        parser.error("use --corrida ou --entrada, não os dois")
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")  # terminais sem UTF-8 (Windows) não quebram com "³"
@@ -165,9 +231,9 @@ def main(argv: list[str] | None = None) -> None:
         log.setLevel(logging.DEBUG)
 
     cfg = carregar_yaml(args.config)
-    telemetria = carregar_telemetria(cfg, args.entrada, args.injetar_eventos)
+    telemetria, origem = carregar_telemetria(cfg, args.entrada, args.injetar_eventos, args.corrida)
     supervisor = criar_supervisor(cfg, args.provedor, args.modelo)
-    camada = CamadaAgentica(cfg, telemetria, supervisor, carregar_especialista_ml(cfg, args.sem_ml))
+    camada = CamadaAgentica(cfg, telemetria, supervisor, carregar_especialista_ml(cfg, args.sem_ml, telemetria, origem))
 
     cs = cfg["saida"]
     nome_log = cs["log_com_eventos"] if args.injetar_eventos else cs["log"]
@@ -185,7 +251,7 @@ def main(argv: list[str] | None = None) -> None:
 
         resultados = ExecutorBlocos(camada, ao_publicar=publicar).rodar(args.tempo_real, args.fator_tempo)
 
-    resumo = resumir(resultados, supervisor, camada.duracao_bloco, args.tempo_real)
+    resumo = {"entrada": origem, **resumir(resultados, supervisor, camada.duracao_bloco, args.tempo_real)}
     with destino.with_name(destino.stem + "_resumo.json").open("w", encoding="utf-8") as f:
         json.dump(resumo, f, ensure_ascii=False, indent=2)
     print(json.dumps(resumo, ensure_ascii=False, indent=2))

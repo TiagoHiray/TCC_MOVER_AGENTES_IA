@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MOVER · gêmeo digital do caminhão</title>
-  <meta name="description" content="Painel do gêmeo digital MOVER: simulação no CARLA, dashboard da telemetria, log da camada agêntica e chat sobre o log.">
+  <title>MOVER · gêmeo digital do caminhão autônomo</title>
+  <meta name="description" content="Painel do gêmeo digital MOVER: caminhão autônomo no CARLA, gráficos ao vivo, log da camada agêntica com as intervenções, consumo comparado e chat.">
   <meta name="color-scheme" content="dark">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111827'/%3E%3Cpath d='M7 21h18v-6l-4-4H7z' fill='%23e5483b'/%3E%3Ccircle cx='11' cy='22' r='2.5' fill='%2338c6dc'/%3E%3Ccircle cx='21' cy='22' r='2.5' fill='%2338c6dc'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/estatico/painel.css">
@@ -18,7 +18,7 @@
       };
       window.addEventListener("error", function (ev) {
         var alvo = ev.target && ev.target !== window ? (ev.target.src || ev.target.href || "") : "";
-        if (alvo && /camera\.mjpg/.test(alvo)) return; // a transmissão da câmera cai quando o replay para
+        if (alvo && /camera\.mjpg/.test(alvo)) return; // a transmissão da câmera cai quando a corrida para
         var onde = ev.filename ? " @" + ev.filename.split("/").pop() + ":" + ev.lineno : "";
         window.__registrarErro((ev.message || (alvo ? "falha ao carregar " + alvo : "erro")) + onde);
       }, true);
@@ -31,16 +31,16 @@
 </head>
 <body>
   <header class="topo">
-    <h1 class="marca">MOVER <span>gêmeo digital do caminhão</span></h1>
-    <div class="blocos" aria-label="Blocos de 10 s da volta">
-      <span class="chip" id="chip-bloco">bloco —</span>
-      <div class="progresso" id="progresso" role="img" aria-label="Progresso da volta por bloco"></div>
+    <h1 class="marca">MOVER <span>gêmeo digital do caminhão autônomo</span></h1>
+    <div class="blocos" aria-label="Progresso da corrida">
+      <span class="chip" id="chip-volta">volta —</span>
+      <div class="progresso" id="progresso" role="img" aria-label="Progresso de cada volta, com as zonas do plano de missão"></div>
     </div>
     <div class="chips">
       <span class="chip chip-tempo" id="chip-tempo">— s</span>
       <span class="chip" id="chip-sessao">sem sessão</span>
+      <span class="chip chip-simulador" id="chip-simulador" hidden></span>
       <span class="chip" id="chip-llm">LLM —</span>
-      <span class="chip chip-sintetico" id="chip-sintetico" hidden title="Volta com a frenagem e a arrancada sintéticas (--injetar-eventos)">eventos sintéticos</span>
       <span class="chip chip-conexao" id="chip-conexao" data-estado="conectando"><span class="ponto" aria-hidden="true"></span><span class="rotulo">conectando…</span></span>
     </div>
   </header>
@@ -56,11 +56,11 @@
         <img id="camera" class="preencher" alt="Câmera de perseguição do caminhão no CARLA" hidden>
         <div class="hud" id="hud" aria-live="off">
           <div class="hud-velocidade"><span id="hud-velocidade">—</span><small>km/h</small></div>
-          <div class="hud-manobra" id="hud-manobra"></div>
+          <div class="hud-alvo" id="hud-alvo"></div>
           <div class="hud-linha">
             <span id="hud-aceleracao">— m/s²</span>
             <span id="hud-tempo">— s</span>
-            <span id="hud-bloco">bloco —</span>
+            <span id="hud-volta">volta —</span>
           </div>
         </div>
         <div class="mensagem" id="mensagem-simulacao" hidden>
@@ -69,9 +69,8 @@
         </div>
         <div class="aviso-proximo" id="aviso-proximo" role="status" hidden>
           <span class="aviso-quando"></span>
-          <span class="selo-nivel" data-tipo="problema"></span>
           <span class="aviso-texto"></span>
-          <span class="aviso-previsto" hidden>previsão</span>
+          <span class="aviso-acao"></span>
         </div>
       </div>
     </section>
@@ -80,16 +79,27 @@
       <header class="painel-cab">
         <h2 id="titulo-dashboard">Dashboard</h2>
         <ul class="legenda" aria-label="Legenda">
-          <li><i class="leg-linha"></i>percorrido</li>
-          <li><i class="leg-tracejado"></i>previsão</li>
-          <li><i class="leg-ponto" data-nivel="critico"></i>crítico</li>
-          <li><i class="leg-ponto" data-nivel="atencao"></i>atenção</li>
-          <li><i class="leg-ponto leg-vazado"></i>previsto</li>
+          <li><i class="leg-linha"></i>medido</li>
+          <li><i class="leg-linha leg-desejada"></i>desejada</li>
+          <li><i class="leg-tracejado leg-limite"></i>limite</li>
+          <li><i class="leg-tracejado leg-bruto"></i>plano do caminhão</li>
+          <li><i class="leg-tracejado leg-escolhido"></i>com agentes</li>
         </ul>
       </header>
       <div class="painel-corpo dashboard">
-        <div class="mapa-volta">
-          <canvas id="canvas-mapa" class="preencher" aria-label="Mapa da volta com o caminhão e os problemas"></canvas>
+        <div class="coluna-mapa">
+          <div class="mapa-volta">
+            <canvas id="canvas-mapa" class="preencher" aria-label="Mapa da volta com o caminhão, as zonas e as decisões"></canvas>
+          </div>
+          <dl class="metricas" aria-label="Consumo e comparação">
+            <div class="metrica destaque"><dt title="Diesel gasto nesta corrida (modelo VT-CPFM sobre a velocidade e a aceleração medidas)">diesel</dt><dd id="m-combustivel">—</dd><small id="m-custo"></small></div>
+            <div class="metrica"><dt id="m-base-rotulo" title="O plano do caminhão sem os agentes, previsto pelo modelo do caminhão, na mesma distância percorrida">sem agentes (previsto)</dt><dd id="m-base">—</dd></div>
+            <div class="metrica"><dt title="Diesel a menos que o caminhão sem agentes, na mesma distância">economia até aqui</dt><dd id="m-economia" data-sinal="">—</dd></div>
+            <div class="metrica"><dt title="Decisões dos agentes (quantas foram do LLM e a latência média dele)">decisões</dt><dd id="m-decisoes">—</dd></div>
+            <div class="metrica"><dt title="Soma da economia prevista em cada decisão">economia prevista</dt><dd id="m-prevista">—</dd></div>
+            <div class="metrica"><dt title="Eventos bruscos de jerk medidos (log) e os previstos no plano sem agentes, na mesma distância">eventos bruscos</dt><dd id="m-eventos">—</dd></div>
+            <p class="benchmark" id="m-benchmark">—</p>
+          </dl>
         </div>
         <div class="graficos">
           <div class="grafico"><canvas id="canvas-velocidade" class="preencher" aria-label="Velocidade no tempo"></canvas></div>
@@ -122,7 +132,7 @@
         <div class="sugestoes" id="sugestoes" aria-label="Perguntas sugeridas"></div>
         <form class="form-chat" id="form-chat" autocomplete="off">
           <label class="so-leitor" for="pergunta">Pergunta sobre o log</label>
-          <input id="pergunta" name="pergunta" type="text" maxlength="500" placeholder="Pergunte sobre o log… (ex.: o que aconteceu entre 40 e 60 s?)">
+          <input id="pergunta" name="pergunta" type="text" maxlength="500" placeholder="Pergunte sobre o log… (ex.: quanto diesel os agentes economizaram?)">
           <button id="enviar" type="submit">Enviar</button>
         </form>
       </div>

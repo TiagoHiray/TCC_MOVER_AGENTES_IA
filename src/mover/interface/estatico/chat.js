@@ -6,7 +6,7 @@
  */
 import { NOME_NIVEL, fmt } from "./desenho.js";
 
-const SUGESTOES = ["Teve algum problema?", "O que vem pela frente?", "Qual foi a velocidade máxima?", "Resuma a volta até agora"];
+const SUGESTOES = ["Quanto diesel os agentes economizaram?", "O que vem pela frente?", "Quais intervenções foram feitas?", "Teve algum problema?", "Resuma a corrida até agora"];
 const MAX_TURNOS = 6; // últimas falas enviadas como histórico (3 rodadas)
 const MAX_TEXTO_TURNO = 1900;
 const CITACAO = /\(#(\d+)[^)]*\)/g;
@@ -42,8 +42,8 @@ export class PainelChat {
     const li = el("li", "fala");
     li.dataset.papel = "assistente";
     li.append(el("p", "fala-texto",
-      "Pergunte sobre o log: problemas, a previsão do próximo bloco, velocidade, curvas ou um trecho " +
-      "(\u201centre 40 e 60 s\u201d, \u201cbloco 5\u201d). As respostas citam as entradas como (#id, tempo)."));
+      "Pergunte sobre a corrida: as intervenções dos agentes, a economia de diesel, o próximo trecho, problemas " +
+      "ou um trecho (\u201centre 40 e 60 s\u201d). As respostas citam as entradas como (#id, tempo)."));
     this.conversa.append(li);
   }
 

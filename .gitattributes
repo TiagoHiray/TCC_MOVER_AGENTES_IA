@@ -1,0 +1,2 @@
+# Scripts .sh com fim de linha LF também no Windows (com CRLF o bash do Git Bash não roda)
+*.sh text eol=lf

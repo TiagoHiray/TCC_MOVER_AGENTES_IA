@@ -78,7 +78,7 @@ fusao:
 
 veiculo:
   # Usado apenas nas colunas *_est (estimativas de throttle/brake/steer).
-  descricao: caminhão do gêmeo digital (vehicle.carlamotors.firetruck)
+  descricao: caminhão do gêmeo digital (vehicle.carlamotors.european_hgv)
   entre_eixos_m: 3.8
   angulo_max_roda_graus: 35
   massa_kg: 9000

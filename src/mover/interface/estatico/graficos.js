@@ -1,47 +1,30 @@
-/* graficos.js — gráficos do dashboard: velocidade e aceleração longitudinal no tempo.
+/* graficos.js — gráficos do dashboard: velocidade e aceleração longitudinal no tempo, montados ao vivo.
  *
- * Linha cheia = já percorrido (até o instante atual); tracejada = o resto do bloco atual e o
- * próximo bloco já analisado (previsão). Linha vertical = instante atual. Triângulos no topo =
- * problemas do log (vazados se ainda são previsão). O mouse mostra o valor nos dois gráficos.
+ * Linha cheia = medido até o instante atual (a curva cresce com a telemetria; nada é desenhado
+ * antes). Na velocidade, também a velocidade desejada mandada ao piloto (fina) e o limite do plano
+ * (tracejado cinza). À direita do instante atual, a previsão da decisão mais recente dos agentes:
+ * o plano que o caminhão mandou (vermelho tracejado) x o plano alterado pelos agentes (verde tracejado).
+ * Triângulos no topo = problemas medidos; losangos na base = decisões dos agentes.
  */
-import { FONTE, FONTE_MONO, cor, corNivel, fmt, indiceAte, prepararCanvas, valorNoTempo } from "./desenho.js";
+import { FONTE, FONTE_MONO, NOME_OPCAO, cor, corNivel, fmt, indiceAte, prepararCanvas, valorNoTempo } from "./desenho.js";
 
 const MARGEM = { esq: 38, dir: 12, topo: 28, base: 20 };
 
-/** Junta a telemetria publicada e a da previsão numa série só (t crescente). */
-function juntarSerie(serie, chave) {
-  const ts = [];
-  const vs = [];
-  const pub = serie.publicada;
-  const n = pub.t.length;
-  for (let i = 0; i < n; i++) {
-    ts.push(pub.t[i]);
-    vs.push(pub[chave][i] ?? null);
-  }
-  const ultimo = n ? pub.t[n - 1] : -Infinity;
-  const prev = serie.previsao;
-  if (prev && prev.t) {
-    for (let i = 0; i < prev.t.length; i++) {
-      if (prev.t[i] > ultimo + 1e-6) {
-        ts.push(prev.t[i]);
-        vs.push(prev[chave]?.[i] ?? null);
-      }
-    }
-  }
-  return { ts, vs };
-}
-
 /** Polilinha de (ts, vs) entre ta e tb, com as pontas interpoladas. Devolve os pontos em px. */
-function pontosEntre(ts, vs, ta, tb, X, Y) {
+function pontosEntre(ts, vs, ta, tb, X, Y, degrau = false) {
   const pts = [];
-  if (!(tb > ta) || !ts.length) return pts;
+  if (!(tb > ta) || !ts || !ts.length) return pts;
   const ini = Math.max(ta, ts[0]);
   const fim = Math.min(tb, ts[ts.length - 1]);
   if (!(fim > ini)) return pts;
   const va = valorNoTempo(ts, vs, ini);
   if (va !== null) pts.push([X(ini), Y(va)]);
+  let anterior = va;
   for (let i = indiceAte(ts, ini) + 1; i < ts.length && ts[i] < fim; i++) {
-    if (vs[i] !== null) pts.push([X(ts[i]), Y(vs[i])]);
+    if (vs[i] === null || vs[i] === undefined) continue;
+    if (degrau && anterior !== null && vs[i] !== anterior) pts.push([X(ts[i]), Y(anterior)]);
+    pts.push([X(ts[i]), Y(vs[i])]);
+    anterior = vs[i];
   }
   const vb = valorNoTempo(ts, vs, fim);
   if (vb !== null) pts.push([X(fim), Y(vb)]);
@@ -55,7 +38,8 @@ function tracar(ctx, pts) {
 
 export class Grafico {
   /**
-   * opcoes: { titulo, unidade, chave, faixa: [min, max], simetrica, casas, cor, sinal }
+   * opcoes: { titulo, unidade, chave, chavePrevisao, faixa: [min, max], simetrica, casas, cor, sinal,
+   *           extras: [{ chave, cor, tracejado, degrau, largura }] }
    * hover: objeto compartilhado entre os gráficos ({ t: número | null }).
    */
   constructor(canvas, opcoes, hover) {
@@ -75,20 +59,22 @@ export class Grafico {
     });
   }
 
-  faixa(vs) {
+  faixa(listas) {
     let maior = -Infinity;
     let menor = Infinity;
-    for (const v of vs) {
-      if (v === null || !Number.isFinite(v)) continue;
-      if (v > maior) maior = v;
-      if (v < menor) menor = v;
+    for (const vs of listas) {
+      for (const v of vs || []) {
+        if (v === null || !Number.isFinite(v)) continue;
+        if (v > maior) maior = v;
+        if (v < menor) menor = v;
+      }
     }
     const [base0, base1] = this.op.faixa;
     const temDados = Number.isFinite(maior) && Number.isFinite(menor);
     if (this.op.simetrica) {
       const extremo = temDados ? Math.max(Math.abs(menor), Math.abs(maior)) : 0;
       const limite = Math.max(base1, Math.ceil(extremo));
-      return { min: -limite, max: limite, passo: limite <= 4 ? 2 : limite <= 8 ? 4 : 5 };
+      return { min: -limite, max: limite, passo: limite <= 4 ? 1 : limite <= 8 ? 2 : 5 };
     }
     const max = Math.max(base1, temDados ? Math.ceil(maior / 10) * 10 : 0);
     return { min: base0, max, passo: max <= 50 ? 10 : 20 };
@@ -104,12 +90,18 @@ export class Grafico {
     const y0 = MARGEM.topo;
     const y1 = h - MARGEM.base;
     if (x1 - x0 < 60 || y1 - y0 < 30) return;
-    const tMin = d.t0;
-    const tMax = d.t0 + Math.max(d.duracao, 1);
+    const serie = d.serie;
+    const ts = serie.t;
+    const vs = serie[this.op.chave];
+    const prev = d.previsao?.curvas || {};
+    const pb = prev.bruto;
+    const pe = prev.escolhido;
+    const chaveP = this.op.chavePrevisao;
+    const tMin = 0;
+    const tMax = Math.max(d.duracao || 60, (d.t ?? 0) + 15, pb?.t?.length ? pb.t[pb.t.length - 1] : 0);
     const X = (t) => x0 + ((t - tMin) / (tMax - tMin)) * (x1 - x0);
-    const { ts, vs } = juntarSerie(d.serie, this.op.chave);
-    const { min, max, passo } = this.faixa(vs);
-    const Y = (v) => y1 - ((v - min) / (max - min)) * (y1 - y0);
+    const { min, max, passo } = this.faixa([vs, pb?.[chaveP], pe?.[chaveP], ...(this.op.extras || []).map((e) => serie[e.chave])]);
+    const Y = (v) => y1 - ((Math.max(min, Math.min(max, v)) - min) / (max - min)) * (y1 - y0);
     this.layout = { x0, x1, tMin, tMax };
     const corSerie = cor(this.op.cor);
 
@@ -132,26 +124,22 @@ export class Grafico {
       ctx.fillText(`${fmt(d.valorAtual, this.op.casas)} ${this.op.unidade}`, x1, 18);
     }
 
-    // faixas do bloco atual e do bloco em previsão
-    if (d.blocoAtual) {
-      ctx.fillStyle = "rgba(255, 255, 255, 0.035)";
-      ctx.fillRect(X(d.blocoAtual.t_ini), y0, X(d.blocoAtual.t_fim) - X(d.blocoAtual.t_ini), y1 - y0);
-    }
-    if (d.blocoPrevisao) {
-      const a = X(d.blocoPrevisao.t_ini);
-      const b = X(d.blocoPrevisao.t_fim);
-      ctx.fillStyle = cor("trajeto", 0.07);
+    // trecho analisado pelos agentes (a janela da decisão mais recente)
+    if (d.previsao && d.t !== null && d.previsao.t_fim > d.t) {
+      const a = X(Math.max(d.t, d.previsao.t_pedido ?? d.t));
+      const b = X(Math.min(tMax, Math.max(d.previsao.t_fim, pe?.t?.length ? pe.t[pe.t.length - 1] : 0)));
+      ctx.fillStyle = cor("escolhido", 0.06);
       ctx.fillRect(a, y0, b - a, y1 - y0);
-      if (b - a > 44) {
+      if (b - a > 70) {
         ctx.font = `600 9.5px ${FONTE}`;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillStyle = cor("trajeto", 0.9);
-        ctx.fillText("previsão", (a + b) / 2, y0 + 3);
+        ctx.fillStyle = cor("escolhido", 0.9);
+        ctx.fillText(`previsão · ${NOME_OPCAO[d.previsao.opcao] || d.previsao.opcao || ""}`, (a + b) / 2, y0 + 3);
       }
     }
 
-    // grade: horizontais nos valores, verticais a cada bloco (10 s)
+    // grade: horizontais nos valores, verticais a cada 10 s
     ctx.lineWidth = 1;
     ctx.font = `500 10px ${FONTE_MONO}`;
     ctx.textAlign = "right";
@@ -168,10 +156,10 @@ export class Grafico {
     }
     const bloco = d.duracaoBloco > 0 ? d.duracaoBloco : 10;
     const pxPorBloco = ((x1 - x0) * bloco) / (tMax - tMin);
-    const rotuloCada = pxPorBloco >= 34 ? 1 : pxPorBloco >= 17 ? 2 : 3;
+    const rotuloCada = pxPorBloco >= 34 ? 1 : pxPorBloco >= 17 ? 2 : pxPorBloco >= 9 ? 4 : 8;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    for (let k = 0, t = tMin; k < 60 && t <= tMax + 1e-9; k++, t += bloco) {
+    for (let k = 0, t = tMin; k < 200 && t <= tMax + 1e-9; k++, t += bloco) {
       const x = Math.round(X(t)) + 0.5;
       ctx.strokeStyle = cor("grade", 0.06);
       ctx.beginPath();
@@ -180,7 +168,7 @@ export class Grafico {
       ctx.stroke();
       if (k % rotuloCada === 0 && x < x1 - 16) {
         ctx.fillStyle = cor("texto3");
-        ctx.fillText(fmt(t - tMin, 0), x, y1 + 5);
+        ctx.fillText(fmt(t, 0), x, y1 + 5);
       }
     }
     ctx.textAlign = "right";
@@ -188,10 +176,22 @@ export class Grafico {
     ctx.fillText("s", x1, y1 + 5);
 
     const agora = d.t;
-    const passado = agora !== null ? pontosEntre(ts, vs, tMin, agora, X, Y) : [];
-    const futuro = agora !== null ? pontosEntre(ts, vs, agora, tMax, X, Y) : pontosEntre(ts, vs, tMin, tMax, X, Y);
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    // séries auxiliares (desejada, limite do plano), só até o instante atual
+    for (const extra of this.op.extras || []) {
+      const pts = agora !== null ? pontosEntre(ts, serie[extra.chave], tMin, agora, X, Y, extra.degrau) : [];
+      if (pts.length < 2) continue;
+      tracar(ctx, pts);
+      ctx.setLineDash(extra.tracejado ? [5, 4] : []);
+      ctx.strokeStyle = cor(extra.cor, extra.alfa ?? 0.85);
+      ctx.lineWidth = extra.largura ?? 1.2;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
 
-    // área sob a curva do que já passou
+    // medido: área e linha até o instante atual
+    const passado = agora !== null ? pontosEntre(ts, vs, tMin, agora, X, Y) : [];
     if (passado.length > 1) {
       if (this.op.sinal) {
         const y = Y(0);
@@ -205,13 +205,13 @@ export class Grafico {
           ctx.lineTo(passado[passado.length - 1][0], y);
           ctx.lineTo(passado[0][0], y);
           ctx.closePath();
-          ctx.fillStyle = cor(nome, 0.3);
+          ctx.fillStyle = cor(nome, 0.28);
           ctx.fill();
           ctx.restore();
         }
       } else {
         const gradiente = ctx.createLinearGradient(0, y0, 0, y1);
-        gradiente.addColorStop(0, cor(this.op.cor, 0.3));
+        gradiente.addColorStop(0, cor(this.op.cor, 0.28));
         gradiente.addColorStop(1, cor(this.op.cor, 0));
         tracar(ctx, passado);
         ctx.lineTo(passado[passado.length - 1][0], y1);
@@ -220,25 +220,37 @@ export class Grafico {
         ctx.fillStyle = gradiente;
         ctx.fill();
       }
-    }
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    if (futuro.length > 1) {
-      tracar(ctx, futuro);
-      ctx.setLineDash([4, 3]);
-      ctx.strokeStyle = cor(this.op.cor, 0.6);
-      ctx.lineWidth = 1.4;
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-    if (passado.length > 1) {
       tracar(ctx, passado);
       ctx.strokeStyle = corSerie;
-      ctx.lineWidth = 1.8;
+      ctx.lineWidth = 1.9;
       ctx.stroke();
     }
 
-    // problemas do log
+    // previsão da decisão mais recente: só o que ainda está à frente do caminhão
+    const inicioPrev = agora ?? tMin;
+    for (const [curva, nome, largura] of [[pb, "bruto", 1.5], [pe, "escolhido", 1.9]]) {
+      if (!curva?.t?.length) continue;
+      const pts = pontosEntre(curva.t, curva[chaveP], inicioPrev, tMax, X, Y);
+      if (pts.length < 2) continue;
+      tracar(ctx, pts);
+      ctx.setLineDash(nome === "bruto" ? [3, 3] : [6, 3]);
+      ctx.strokeStyle = cor(nome, 0.92);
+      ctx.lineWidth = largura;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // decisões dos agentes (losangos na base) e problemas medidos (triângulos no topo)
+    for (const dec of d.decisoes || []) {
+      if (dec.t < tMin || dec.t > tMax) continue;
+      const x = X(dec.t);
+      ctx.save();
+      ctx.translate(x, y1 - 5);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = dec.ativa ? cor("escolhido") : cor("texto3");
+      ctx.fillRect(-3, -3, 6, 6);
+      ctx.restore();
+    }
     for (const p of d.problemas) {
       if (p.t < tMin || p.t > tMax) continue;
       const x = X(p.t);
@@ -255,14 +267,8 @@ export class Grafico {
       ctx.lineTo(x + 4.5, y0);
       ctx.lineTo(x, y0 + 7);
       ctx.closePath();
-      if (p.previsto) {
-        ctx.lineWidth = 1.4;
-        ctx.strokeStyle = corNivel(p.nivel);
-        ctx.stroke();
-      } else {
-        ctx.fillStyle = corNivel(p.nivel);
-        ctx.fill();
-      }
+      ctx.fillStyle = corNivel(p.nivel);
+      ctx.fill();
       ctx.restore();
     }
 
@@ -275,7 +281,7 @@ export class Grafico {
       ctx.moveTo(x, y0);
       ctx.lineTo(x, y1);
       ctx.stroke();
-      const v = valorNoTempo(ts, vs, agora);
+      const v = valorNoTempo(ts, vs, Math.min(agora, ts.length ? ts[ts.length - 1] : agora));
       if (v !== null) {
         ctx.beginPath();
         ctx.arc(x, Y(v), 3.6, 0, 2 * Math.PI);
@@ -303,7 +309,9 @@ export class Grafico {
     // leitura sob o mouse (nos dois gráficos ao mesmo tempo)
     const th = this.hover.t;
     if (th !== null && th >= tMin && th <= tMax) {
-      const v = valorNoTempo(ts, vs, th);
+      const futuro = agora !== null && th > agora;
+      const fonte = futuro ? pe : null;
+      const v = futuro ? (fonte?.t?.length ? valorNoTempo(fonte.t, fonte[chaveP], th) : null) : valorNoTempo(ts, vs, th);
       const x = Math.round(X(th)) + 0.5;
       ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
       ctx.lineWidth = 1;
@@ -312,8 +320,7 @@ export class Grafico {
       ctx.lineTo(x, y1);
       ctx.stroke();
       if (v !== null) {
-        const futuroNoMouse = agora !== null && th > agora;
-        const texto = `${fmt(th, 1)} s · ${fmt(v, this.op.casas)} ${this.op.unidade}${futuroNoMouse ? " · previsto" : ""}`;
+        const texto = `${fmt(th, 1)} s · ${fmt(v, this.op.casas)} ${this.op.unidade}${futuro ? " · previsto com a alteração" : ""}`;
         ctx.font = `600 10.5px ${FONTE}`;
         const largura = ctx.measureText(texto).width + 12;
         const xr = x + 8 + largura > x1 ? x - 8 - largura : x + 8;

@@ -42,12 +42,10 @@ def faixa_velocidade(v_kmh: float, limites: list[float]) -> str:
 
 
 def fonte_do_trecho(fontes: pd.Series) -> str:
-    """'real', 'sintetico' ou 'misto', conforme a coluna fonte das linhas do trecho."""
+    """A fonte das linhas do trecho (real, sintetico, carla, substituto...) ou 'misto' se houver mais de uma."""
     valores = set(fontes.astype(str))
-    if valores <= {"real"}:
-        return "real"
-    if valores <= {"sintetico"}:
-        return "sintetico"
+    if len(valores) == 1:
+        return valores.pop()
     return "misto"
 
 

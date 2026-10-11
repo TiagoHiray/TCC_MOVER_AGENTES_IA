@@ -1,0 +1,61 @@
+{
+  "modo": "agentes",
+  "simulador": "carla",
+  "voltas": 1,
+  "motivo_fim": "interrompido",
+  "duracao_real_s": 205.906,
+  "atrasos_relogio": 0,
+  "decisoes": 3,
+  "decisoes_llm": 3,
+  "aplicacoes": {
+    "regra": 5,
+    "trocas_llm": 0,
+    "atrasadas": 0
+  },
+  "id": "20261011_121132_agentes",
+  "gravacao_carla": "C:\\Users\\wingpu\\Documents\\TCC_MOVER_AGENTES_IA-main\\tcc_v2\\data\\autonomo\\corridas\\20261011_121132_agentes\\gravacao_carla.log",
+  "mapa": "C:\\Users\\wingpu\\Documents\\TCC_MOVER_AGENTES_IA-main\\tcc_v2\\data\\mapas\\mapa_final.xodr",
+  "llm_decisoes": "ollama:gemma2:2b",
+  "linha_de_base": {
+    "tempo_s": 160.6,
+    "combustivel_ml": 434.4,
+    "eventos": 25
+  },
+  "fonte_linha_de_base": "plano do caminhão sem agentes, previsto pelo modelo do caminhão",
+  "suavizador_ml": "floresta aleatória (2000 situações simuladas)",
+  "preco_r_l": 6.0,
+  "combustivel": "diesel",
+  "total": {
+    "tempo_s": 203.75,
+    "distancia_m": 83.2,
+    "vel_media_kmh": 1.47,
+    "combustivel_l": 0.13573665411836028,
+    "custo_r": 0.8144199247101617,
+    "co2_kg": 0.3637742330372056,
+    "energia_rodas_kwh": 0.07276290288245939,
+    "energia_freio_kwh": 0.048605805966371894,
+    "acel_min_mps2": -2.98,
+    "acel_max_mps2": 3.64,
+    "jerk_max_abs_mps3": 18.68,
+    "eventos_atencao": 0,
+    "eventos_criticos": 9
+  },
+  "por_volta": [
+    {
+      "volta": 1,
+      "tempo_s": 203.75,
+      "distancia_m": 83.2,
+      "vel_media_kmh": 1.47,
+      "combustivel_l": 0.13573665411836028,
+      "custo_r": 0.8144199247101617,
+      "co2_kg": 0.3637742330372056,
+      "energia_rodas_kwh": 0.07276290288245939,
+      "energia_freio_kwh": 0.048605805966371894,
+      "acel_min_mps2": -2.98,
+      "acel_max_mps2": 3.64,
+      "jerk_max_abs_mps3": 18.68,
+      "eventos_atencao": 0,
+      "eventos_criticos": 9
+    }
+  ]
+}

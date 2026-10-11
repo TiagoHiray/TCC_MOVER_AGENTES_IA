@@ -1,4 +1,7 @@
-"""Eventos sintéticos de teste (--injetar-eventos): frenagens e arrancadas bruscas.
+"""LEGADO: eventos sintéticos de teste (--injetar-eventos) para a gravação tratada do Sensor Logger.
+
+Uma corrida sem agentes no CARLA (dirigir --sem-agentes) já traz as decisões bruscas do caminhão
+sozinho; isto só vale com rodar_agentes --entrada <telemetria tratada> --injetar-eventos.
 
 A volta gravada no campus não tem nenhum evento de condução brusca (todos os picos de jerk
 coincidem com lombadas). Para testar a detecção, este módulo soma pulsos de aceleração

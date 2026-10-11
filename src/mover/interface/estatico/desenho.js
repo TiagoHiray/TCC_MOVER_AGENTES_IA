@@ -1,5 +1,5 @@
 /* desenho.js — utilidades compartilhadas pelos painéis: paleta, formatação pt-BR, canvas,
- * interpolação da pose no trajeto e as figuras (caminhão, seta, norte, escala).
+ * interpolação da pose no rastro, nomes do plano de missão e as figuras (caminhão, seta, norte, escala).
  *
  * Referencial do mapa (o mesmo da cena): x = leste, y = norte, em metros; rumo em radianos,
  * anti-horário a partir do leste. A Vista leva o mapa para a tela (y para baixo).
@@ -26,6 +26,15 @@ export const PALETA = {
   caminhao: [4, 78, 54],
   cabine: [4, 62, 38],
   fundoEscuro: [222, 25, 6],
+  bruto: [2, 78, 62],        // o plano que o caminhão mandou (sem alteração)
+  escolhido: [150, 60, 52],  // previsão com a intervenção escolhida
+  desejada: [265, 60, 72],   // velocidade desejada mandada ao piloto
+  limite: [220, 10, 60],     // limite do plano de missão
+  lombada: [32, 90, 56],
+  faixa: [0, 0, 92],
+  curva: [205, 75, 62],
+  portaria: [2, 80, 60],
+  zona: [280, 50, 65],
 };
 
 export function cor(nome, alfa = 1) {
@@ -38,6 +47,24 @@ export function corNivel(nivel, alfa = 1) {
 }
 
 export const NOME_NIVEL = { info: "info", atencao: "atenção", critico: "crítico" };
+export const NOME_OPCAO = {
+  economica: "econômica",
+  suave: "suave",
+  moderada: "moderada",
+  firme: "firme",
+  ml: "ajuste do ML",
+  nenhuma: "sem alteração",
+};
+export const NOME_TIPO = {
+  lombada: "lombada",
+  faixa: "faixa de pedestre",
+  curva: "curva",
+  parada: "parada",
+  portaria: "portaria",
+  chegada: "chegada",
+  partida: "partida",
+  zona: "zona",
+};
 const NOME_EVENTO = {
   frenagem_brusca: "frenagem brusca",
   corte_aceleracao: "corte brusco de aceleração",
@@ -69,10 +96,16 @@ export function fmt(valor, casas = 1) {
 
 export const fmtTempo = (t, casas = 1) => `${fmt(t, casas)} s`;
 
-/** "40,0–45,0 s" para logs; "51,4 s" (pico) para problemas. */
+/** "40,0–45,0 s" para logs; "51,4 s" (pico) para problemas; o instante da decisão para intervenções. */
 export function tempoDaEntrada(entrada) {
   if (entrada.tipo === "problema") return fmtTempo(entrada.t_pico);
+  if (entrada.tipo === "intervencao") return fmtTempo(entrada.t_pedido ?? entrada.t_ini);
   return `${fmt(entrada.t_ini)}–${fmt(entrada.t_fim)} s`;
+}
+
+/** Cor de um tipo de elemento do plano (zona ou parada). */
+export function corTipo(tipo, alfa = 1) {
+  return cor(PALETA[tipo] ? tipo : tipo === "parada" ? "portaria" : "zona", alfa);
 }
 
 /** '2026-10-03T14:36:35.427-03:00' -> '14:36:35'. */

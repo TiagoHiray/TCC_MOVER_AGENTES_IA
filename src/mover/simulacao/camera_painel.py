@@ -4,10 +4,10 @@ Um `sensor.camera.rgb` fica preso ao caminhão (attach_to, AttachmentType.Rigid)
 dele. Cada quadro chega em BGRA numa thread do cliente do CARLA e só é copiado para uma fila
 curta (FilaEnvio). A thread da fila converte o quadro em JPEG (Pillow) e o manda ao servidor
 (POST /camera), que o repassa à página como MJPEG. Com a fila cheia, o quadro mais antigo é
-descartado: o laço de 20 Hz do replay nunca espera a câmera.
+descartado: o laço de 20 Hz da corrida nunca espera a câmera.
 
 O sensor_tick vale em tempo de simulação: 10 fps com fator de tempo 1 dão ~10 quadros por segundo
-de relógio. Se algo falhar ao criar a câmera, o replay segue sem ela e a página mostra o mapa 2D.
+de relógio. Se algo falhar ao criar a câmera, a corrida segue sem ela e a página mostra o mapa 2D.
 """
 
 from __future__ import annotations
@@ -93,10 +93,10 @@ class CameraPainel:
             self.enviar(codificar_jpeg(bgra, largura, altura, int(self.cfg["qualidade_jpeg"])))
             self.enviados += 1
             self._falhas = 0
-        except Exception as erro:  # o painel é só para ver: o replay continua
+        except Exception as erro:  # o painel é só para ver: a corrida continua
             self._falhas += 1
             if self._falhas == 1:
-                log.warning("Falha ao mandar o quadro da câmera ao servidor (%s); o replay continua.", erro)
+                log.warning("Falha ao mandar o quadro da câmera ao servidor (%s); a corrida continua.", erro)
 
     def encerrar(self) -> None:
         """Para de escutar, destrói o sensor e fecha a fila (idempotente)."""
