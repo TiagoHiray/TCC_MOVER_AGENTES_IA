@@ -1,11 +1,13 @@
 """Mede quantas vezes mais rápido que o tempo real o CARLA simula (ego sozinho, modo síncrono).
 
 Responde à pergunta do gêmeo: cabe simular H segundos à frente dentro do ciclo de 1 s?
-Não carrega mapa (usa o mundo já aberto) e restaura as configurações no fim.
+Gera o mundo OpenDRIVE do mapa do campus (config/simulacao.yaml, ou --mapa) e restaura as configurações
+no fim; com --manter-mundo mede o mundo já aberto no CARLA.
 
 Uso (na VM, com o CarlaUE4 aberto; ambiente com Python 3.12 + carla==0.9.16):
     python -m mover.simulacao.benchmark_tempo_real
     python -m mover.simulacao.benchmark_tempo_real --horizonte 10 --repeticoes 5 --com-renderizacao
+    python -m mover.simulacao.benchmark_tempo_real --manter-mundo      # mapa que estiver aberto
 """
 
 from __future__ import annotations
@@ -49,6 +51,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--ticks-reposicao", type=int, default=3, help="ticks de estabilização após teleporte")
     parser.add_argument("--blueprint", default=cfg.get("veiculo", {}).get("blueprint", "vehicle.carlamotors.firetruck"))
     parser.add_argument("--com-renderizacao", action="store_true", help="não liga o no_rendering_mode")
+    parser.add_argument("--mapa", default=cfg.get("mapa", {}).get("arquivo"), help="arquivo .xodr a gerar (padrão: YAML)")
+    parser.add_argument("--manter-mundo", action="store_true", help="não gera o mapa; mede o mundo já aberto")
     args = parser.parse_args(argv)
 
     try:
@@ -58,7 +62,16 @@ def main(argv: list[str] | None = None) -> None:
 
     client = carla.Client(args.host, args.porta)
     client.set_timeout(float(cc.get("timeout_s", 60.0)))
-    world = client.get_world()
+    if args.manter_mundo:
+        world = client.get_world()
+    else:
+        if not args.mapa or not caminho(args.mapa).exists():
+            raise SystemExit(f"Mapa não encontrado: {args.mapa!r} (use --mapa ou --manter-mundo)")
+        from mover.simulacao.replay_carla import parametros_opendrive
+
+        print(f"Gerando o mundo OpenDRIVE de {args.mapa} (pode levar alguns segundos)...")
+        world = client.generate_opendrive_world(caminho(args.mapa).read_text(encoding="utf-8"),
+                                                parametros_opendrive(carla, cc))
     original = world.get_settings()
     ator = None
     try:
