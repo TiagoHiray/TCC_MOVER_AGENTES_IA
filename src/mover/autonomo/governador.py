@@ -16,7 +16,7 @@ No CARLA a saída vira TrafficManager.set_desired_speed(caminhao, km/h) a cada t
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 from typing import Any
 
 from mover.autonomo.missao import Instancia, PlanoMissao
@@ -148,6 +148,39 @@ class Governador:
         novo._feitas = set(self._feitas)
         novo.ultimo = dict(self.ultimo)
         return novo
+
+    def exportar_estado(self) -> dict[str, Any]:
+        """Estado em JSON: o caminhão o manda com o plano, e os agentes simulam a partir dele."""
+        return {
+            "modo": self.modo,
+            "n_voltas": self.n_voltas,
+            "intervencoes": {chave: asdict(interv) for chave, interv in self.intervencoes.items()},
+            "disparadas": sorted(self._disparadas),
+            "feitas": sorted(self._feitas),
+            "parada": [self._parada[0], float(self._parada[1])] if self._parada is not None else None,
+            "retomada": asdict(self._retomada) if self._retomada is not None else None,
+            "v_ref": float(self._v_ref),
+            "a_ref": float(self._a_ref),
+            "a_avanco": float(self._a_avanco),
+            "terminou": bool(self.terminou),
+            "ultimo": dict(self.ultimo),
+        }
+
+    def restaurar_estado(self, estado: dict[str, Any]) -> "Governador":
+        """Carrega o estado de exportar_estado() (o plano e a configuração vêm do construtor)."""
+        self.intervencoes = {chave: Intervencao(**dados) for chave, dados in (estado.get("intervencoes") or {}).items()}
+        self._disparadas = set(estado.get("disparadas") or [])
+        self._feitas = set(estado.get("feitas") or [])
+        parada = estado.get("parada")
+        self._parada = (str(parada[0]), float(parada[1])) if parada else None
+        retomada = estado.get("retomada")
+        self._retomada = Intervencao(**retomada) if retomada else None
+        self._v_ref = float(estado.get("v_ref", 0.0))
+        self._a_ref = float(estado.get("a_ref", 0.0))
+        self._a_avanco = float(estado.get("a_avanco", 0.0))
+        self.terminou = bool(estado.get("terminou", False))
+        self.ultimo = dict(estado.get("ultimo") or {})
+        return self
 
     # ------------------------------------------------------------------ tick
     def velocidade_desejada(self, d: float, v: float, a: float, dt: float) -> float:

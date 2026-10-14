@@ -7,10 +7,12 @@ O que acontece:
    Manager); sem o CARLA (--sem-carla), num simulador substituto com o mesmo controle.
 3. A cada bloco de 10 s, o caminhão monta, a partir do estado atual da corrida, o plano do bloco
    seguinte (a velocidade e a aceleração que vai aplicar, as manobras e as decisões bruscas) e o
-   manda aos agentes antes de executá-lo.
-4. Os agentes alteram levemente esse plano quando ele tem decisões bruscas: o modelo de ML propõe
-   quanto suavizar, o modelo do caminhão confere, a regra recomenda e o Supervisor (LLM local, com
-   prazo) aprova ou troca. A alteração muda de verdade a velocidade desejada mandada ao piloto.
+   manda aos agentes por HTTP (POST /agentes/plano) antes de executá-lo, como um caminhão real
+   ligado a um servidor. As alterações voltam também por HTTP (GET /agentes/decisoes).
+4. Os agentes, no servidor, alteram levemente esse plano quando ele tem decisões bruscas: o modelo
+   de ML propõe quanto suavizar, o modelo do caminhão confere, a regra recomenda e o Supervisor
+   (LLM local, com prazo) aprova ou troca. A alteração muda de verdade a velocidade desejada
+   mandada ao piloto.
 5. A página (http://127.0.0.1:8000/) mostra a simulação, os gráficos que se montam ao vivo, o
    log (alterações e o que foi medido), o consumo comparado com o plano sem agentes e o chat.
 6. No fim, a corrida fica em data/autonomo/corridas/<id>/: telemetria.csv, decisoes.jsonl (com o
@@ -25,6 +27,7 @@ Uso, a partir da pasta src/ do repositório:
     python -m mover.autonomo.dirigir --sem-llm           # agentes sem o Supervisor (sem Ollama)
     python -m mover.autonomo.dirigir --sem-ml            # agentes só com as opções fixas de suavização
     python -m mover.autonomo.dirigir --provedor falso    # LLM falso (sem modelo instalado)
+    python -m mover.autonomo.dirigir --servidor http://<ip>:8000   # agentes e painel em outra máquina
 """
 
 from __future__ import annotations
@@ -33,7 +36,6 @@ import argparse
 import json
 import logging
 import sys
-import time
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -44,8 +46,8 @@ if __package__ in (None, ""):  # execução direta: python src/mover/autonomo/di
 
 import pandas as pd
 
-from mover.agentes.decisao import RespostaDecisao
-from mover.agentes.llm import MARCADOR_RASCUNHO, PROVEDORES, ClienteLLM, criar_llm
+from mover.agentes.llm import PROVEDORES
+from mover.autonomo.canal_agentes import CanalHttp, ErroAgentes
 from mover.autonomo.cliente import ClientePainel, ErroServidor, servidor_no_ar
 from mover.autonomo.conducao import Conducao, OpcoesConducao, ResultadoConducao, metricas_da_corrida
 from mover.autonomo.montagem import Montagem, montar
@@ -54,29 +56,19 @@ from mover.config import caminho, carregar_yaml
 log = logging.getLogger("mover.autonomo")
 
 
-def criar_llm_decisoes(cfg_agentes: dict[str, Any], provedor: str | None, modelo: str | None,
-                       prazo_s: float) -> ClienteLLM | None:
-    """LLM do Supervisor das decisões, já aquecido (a 1ª chamada do Ollama carrega o modelo na memória)."""
+def abrir_agentes(url: str, m: Montagem, voltas: int, usar_llm: bool, usar_ml: bool, provedor: str | None,
+                  modelo: str | None) -> tuple[CanalHttp, dict[str, Any]]:
+    """Conecta o caminhão ao servidor dos agentes e abre a sessão (o servidor monta o LLM e o ML)."""
+    canal = CanalHttp.conectar(url)
+    log.info("Abrindo a sessão dos agentes em %s (na primeira vez o modelo de ML é treinado, ~1-2 min)...", url)
     try:
-        llm = criar_llm(cfg_agentes.get("llm", {}), provedor, modelo)
-    except Exception as erro:  # pacote ausente, chave faltando...
-        log.warning("Sem LLM para as decisões (%s); os agentes decidem só pela regra.", erro)
-        return None
-    if llm.nome == "falso":
-        return llm
-    inicio = time.monotonic()
-    try:
-        llm.gerar("Responda só com o JSON do rascunho.",
-                  f'{MARCADOR_RASCUNHO} {{"opcao": "suave", "texto": "teste"}}', RespostaDecisao)
-        latencia = time.monotonic() - inicio
-        log.info("LLM %s pronto (aquecimento em %.1f s).", llm.nome, latencia)
-        if latencia > prazo_s:
-            log.warning("O LLM levou %.1f s no aquecimento; acima do prazo de %.0f s, as decisões caem na regra.",
-                        latencia, prazo_s)
-    except Exception as erro:
-        log.warning("O LLM %s não respondeu (%s: %s). Ligue o Ollama (scripts/preparar_ollama) ou use --sem-llm; "
-                    "por enquanto as decisões usam a regra.", llm.nome, type(erro).__name__, erro)
-    return llm
+        info = canal.abrir({"voltas": voltas, "usar_llm": usar_llm, "usar_ml": usar_ml, "provedor": provedor,
+                            "modelo": modelo, "comprimento_volta_m": m.plano.comprimento})
+    except ErroAgentes:
+        canal.http.close()
+        raise
+    log.info("Agentes por HTTP: LLM %s, especialista de ML %s.", info.get("llm") or "- (só a regra)", info.get("ml") or "-")
+    return canal, info
 
 
 def gravar_corrida(pasta: Path, resultado: ResultadoConducao, metricas: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -146,14 +138,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manter-mundo", action="store_true", help="usa o mapa já aberto no CARLA")
     parser.add_argument("--camera", choices=("perseguicao", "cima", "livre"), help="câmera da janela do CARLA")
     parser.add_argument("--sem-camera-painel", action="store_true", help="o painel 1 mostra o mapa 2D")
-    parser.add_argument("--servidor", help="URL de um servidor do painel já no ar (padrão: sobe um neste processo)")
-    parser.add_argument("--sem-painel", action="store_true", help="não usa o servidor nem a página")
+    parser.add_argument("--servidor", help="URL de um servidor do painel e dos agentes já no ar (padrão: sobe um neste processo)")
+    parser.add_argument("--sem-painel", action="store_true",
+                        help="não usa a página (os agentes seguem por HTTP, num servidor só desta corrida)")
     parser.add_argument("--sem-navegador", action="store_true", help="não abre o painel no navegador")
     parser.add_argument("--sair-no-fim", action="store_true", help="encerra o servidor assim que a corrida terminar")
     parser.add_argument("--sem-ml", action="store_true", help="sem o modelo de ML de suavização (só as opções fixas)")
     args = parser.parse_args(argv)
 
-    from mover.servidor.rodar_servidor import configurar_logs, iniciar_em_thread, parar_servidor
+    from mover.servidor.rodar_servidor import configurar_logs, iniciar_em_thread, parar_servidor, porta_do_servidor
 
     configurar_logs()
     cfg = carregar_yaml(args.config)
@@ -162,37 +155,38 @@ def main(argv: list[str] | None = None) -> int:
     m = montar(cfg, args.missao)
     voltas = int(args.voltas or (cfg.get("missao") or {}).get("voltas", 1))
     modo = "bruto" if args.sem_agentes else "agentes"
-    suavizador = None
-    if modo == "agentes" and not args.sem_ml:
-        suavizador = m.suavizador()  # treina o modelo de ML na primeira vez (~1-2 min)
-        if suavizador is not None:
-            log.info("Especialista de ML de suavização: %s.", suavizador.nome)
-    cd = m.cfg_decisao
-    llm = None
-    if modo == "agentes" and not args.sem_llm:
-        llm = criar_llm_decisoes(cfg_agentes, args.provedor, args.modelo, float(cd.get("prazo_llm_s", 6.0)))
     log.info("Plano de missão: rota de %.0f m (%s), %d zonas, %d parada(s); %d volta(s), modo %s.",
              m.plano.comprimento, m.plano.sentido or "?", len(m.plano.zonas), len(m.plano.paradas), voltas, modo)
 
     servidor = thread = None
     cliente: ClientePainel | None = None
+    canal: CanalHttp | None = None
+    info_agentes: dict[str, Any] = {}
     sim = None
     codigo = 0
     url = None
     sessao_aberta = False
     try:
-        if not args.sem_painel:
+        if not args.sem_painel or modo == "agentes":
             cs = cfg_sim.get("servidor", {})
             host, porta = cs.get("host", "127.0.0.1"), int(cs.get("porta", 8000))
             url = args.servidor or f"http://{host}:{porta}"
-            if not args.servidor and not servidor_no_ar(url):
+            if not args.servidor and (args.sem_painel or not servidor_no_ar(url)):
                 from mover.servidor.app import criar_app
 
-                servidor, thread = iniciar_em_thread(criar_app(cfg_agentes, cfg_sim, cfg_autonomo=cfg), host, porta)
+                if args.sem_painel:  # só os agentes: numa porta livre, sem mexer num painel que esteja no ar
+                    host, porta = "127.0.0.1", 0
+                servidor, thread = iniciar_em_thread(criar_app(cfg_agentes, cfg_sim, cfg_autonomo=cfg, montagem=m),
+                                                     host, porta)
+                url = f"http://{host}:{porta_do_servidor(servidor, porta)}"
+        if not args.sem_painel:
             cliente = ClientePainel.conectar(url)
             log.info("Painel (simulação, gráficos, log e chat): %s/", url)
             if servidor is not None and not args.sem_navegador:
                 webbrowser.open(f"{url}/")
+        if modo == "agentes":
+            canal, info_agentes = abrir_agentes(url, m, voltas, not args.sem_llm, not args.sem_ml, args.provedor, args.modelo)
+        llm_nome, ml_nome = info_agentes.get("llm"), info_agentes.get("ml")
 
         sim, arquivo_mapa = preparar_simulador(args, m, cfg_sim, voltas)
         if cliente is not None:
@@ -224,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         if cliente is not None:
             info = cliente.abrir_sessao({
                 "modo": modo, "voltas": voltas, "simulador": sim.nome, "provedor": args.provedor, "modelo": args.modelo,
-                "llm_decisoes": (llm.nome if llm else "regra") if modo == "agentes" else None,
+                "llm_decisoes": (llm_nome or "regra") if modo == "agentes" else None,
                 "fator_tempo": args.fator_tempo, "tempo_real": not args.sem_espera,
                 "duracao_bloco_s": m.duracao_bloco_s, "comprimento_volta_m": m.plano.comprimento,
                 "duracao_prevista_s": round(float(prevista.t[-1]), 1), "linha_de_base": linha_base,
@@ -234,23 +228,22 @@ def main(argv: list[str] | None = None) -> int:
             log.info("Sessão %s aberta. Partindo!", info["id"])
 
         governador = m.governador(modo, voltas)
-        decisor = m.decisor(voltas, llm, suavizador) if modo == "agentes" else None
         # sem o relógio, a simulação correria na frente dos agentes: então ela espera cada decisão
-        opcoes = OpcoesConducao(voltas=voltas, usar_llm=llm is not None, assincrona=not args.sem_espera,
+        opcoes = OpcoesConducao(voltas=voltas, usar_llm=llm_nome is not None, assincrona=not args.sem_espera,
                                 fator_tempo=args.fator_tempo,
                                 sem_espera=args.sem_espera, duracao_bloco_s=m.duracao_bloco_s)
-        conducao = Conducao(m.plano, sim, governador, decisor, opcoes, m.caminhao, m.consumo,
+        conducao = Conducao(m.plano, sim, governador, canal, opcoes, m.caminhao, m.consumo,
                             ao_lote=cliente.enviar_telemetria if cliente else None,
                             ao_decisao=cliente.enviar_decisao if cliente else None,
-                            imprimir=lambda texto: print(texto, flush=True))
+                            imprimir=lambda texto: print(texto, flush=True),
+                            planejador=m.planejador(voltas) if canal is not None else None)
         resultado = conducao.rodar()
-        if decisor is not None:
-            decisor.encerrar()
         metricas = metricas_da_corrida(resultado, m.plano.comprimento, m.caminhao, m.consumo, m.limiares)
         extra = {"id": id_corrida, "gravacao_carla": gravacao, "mapa": str(arquivo_mapa) if arquivo_mapa else None,
-                 "llm_decisoes": llm.nome if llm else None, "linha_de_base": (linha_base or {}).get("total"),
-                 "fonte_linha_de_base": (linha_base or {}).get("fonte"),
-                 "suavizador_ml": suavizador.nome if suavizador is not None else None,
+                 "llm_decisoes": llm_nome, "linha_de_base": (linha_base or {}).get("total"),
+                 "fonte_linha_de_base": (linha_base or {}).get("fonte"), "suavizador_ml": ml_nome,
+                 "agentes_http": url if canal is not None else None,
+                 "requisicoes_agentes": canal.requisicoes if canal is not None else 0,
                  "preco_r_l": m.consumo.preco_r_l, "combustivel": m.consumo.combustivel}
         if hasattr(sim, "parar_gravacao"):
             sim.parar_gravacao()
@@ -273,18 +266,20 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         log.warning("Interrompido (Ctrl+C).")
         codigo = 130
-    except ErroServidor as erro:
+    except (ErroServidor, ErroAgentes) as erro:
         log.error("%s", erro)
         codigo = 1
     finally:
         if sim is not None:
             sim.encerrar()  # primeiro o CARLA: em modo síncrono ele fica parado esperando o próximo tick
+        if canal is not None:
+            canal.encerrar()
         if cliente is not None:
             if sessao_aberta:
                 cliente.encerrar_sessao(None)
             cliente.fechar()
         if servidor is not None:
-            if not args.sair_no_fim and codigo in (0, 2):
+            if not args.sair_no_fim and not args.sem_painel and codigo in (0, 2):
                 esperar_ctrl_c(thread, url)
             parar_servidor(servidor, thread)
     return codigo
