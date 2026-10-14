@@ -39,6 +39,14 @@ from mover.autonomo.veiculo import ParametrosCaminhao
 log = logging.getLogger("mover.autonomo")
 
 
+class FimDoSimulador(RuntimeError):
+    """O simulador não pode seguir a corrida (ex.: o CARLA removeu o caminhão); a corrida termina com `motivo`."""
+
+    def __init__(self, motivo: str, mensagem: str):
+        super().__init__(mensagem)
+        self.motivo = motivo
+
+
 class Simulador(Protocol):
     nome: str
     dt: float
@@ -98,7 +106,7 @@ class ResultadoConducao:
     voltas: int
     linhas: list[dict[str, Any]] = field(default_factory=list)
     decisoes: list[dict[str, Any]] = field(default_factory=list)
-    motivo_fim: str = ""             # chegada | tempo_max | preso | interrompido
+    motivo_fim: str = ""             # chegada | tempo_max | preso | removido | interrompido
     duracao_real_s: float = 0.0
     atrasos_relogio: int = 0
     aplicacoes: dict[str, int] = field(default_factory=lambda: {"regra": 0, "trocas_llm": 0, "atrasadas": 0})
@@ -299,7 +307,12 @@ class Conducao:
             while True:
                 self._recolher()
                 v_des = gov.velocidade_desejada(self.estado["d"], self.estado["v"], self.estado["a"], dt)
-                linha = sim.passo(v_des)
+                try:
+                    linha = sim.passo(v_des)
+                except FimDoSimulador as erro:
+                    res.motivo_fim = erro.motivo
+                    log.error("Corrida encerrada: %s", erro)
+                    break
                 t, d, v, a = float(linha["sim_time"]), float(linha["d"]), float(linha["speed_mps"]), float(linha["acc_long"])
                 self.estado = {"t": t, "d": d, "v": v, "a": a}
                 litros = medidor.passo(v, a, dt, float(linha.get("rampa", 0.0) or 0.0))
@@ -379,4 +392,4 @@ class Conducao:
             self.canal.encerrar()
 
 
-__all__ = ["Conducao", "OpcoesConducao", "Relogio", "ResultadoConducao", "Simulador", "metricas_da_corrida"]
+__all__ = ["Conducao", "FimDoSimulador", "OpcoesConducao", "Relogio", "ResultadoConducao", "Simulador", "metricas_da_corrida"]

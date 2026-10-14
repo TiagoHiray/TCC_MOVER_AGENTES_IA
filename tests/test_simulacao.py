@@ -263,6 +263,10 @@ def carla_falso() -> types.ModuleType:
         def apply_control(self, controle):
             self.controles.append(controle)
 
+        @property
+        def is_alive(self):
+            return not self.destruido
+
         def set_autopilot(self, ligado=True, porta=8000):
             chamadas.append(("autopiloto", ligado, porta))
             self.autopiloto = (ligado, porta)
@@ -571,6 +575,90 @@ def test_corrida_completa_no_carla_falso_para_na_chegada(monkeypatch):
     assert res.completa and res.simulador == "carla"
     assert res.linhas[-1]["d"] == pytest.approx(plano.comprimento, abs=10.0) and res.linhas[-1]["speed_mps"] < 0.06
     assert min(l["speed_mps"] for l in res.linhas if abs(l["d"] - 200.0) < 6.0) < 0.05  # parou na portaria
+
+
+def test_caminhao_removido_pelo_carla_encerra_a_corrida_com_o_diagnostico(monkeypatch, caplog):
+    from mover.autonomo.conducao import Conducao, OpcoesConducao
+    from mover.autonomo.montagem import montar
+
+    carla, plano, sim = _simulador(monkeypatch)
+    world = carla.cliente.mundo
+    tick = world.tick
+
+    def tick_que_remove():  # o Traffic Manager tira o caminhão do mundo no meio da volta
+        frame = tick()
+        if world.ticks > 400:
+            world.ator.destruido = True
+        return frame
+
+    world.tick = tick_que_remove
+    m = montar(carregar_yaml("config/autonomo.yaml"), plano=plano)
+    with caplog.at_level(logging.ERROR, logger="mover.autonomo"):
+        res = Conducao(plano, sim, m.governador("bruto", 1), None, OpcoesConducao(voltas=1, sem_espera=True)).rodar()
+    sim.encerrar()
+    assert res.motivo_fim == "removido" and not res.completa and len(res.linhas) == 400 - 20  # 20 ticks assentando
+    assert "o CARLA removeu o caminhão" in caplog.text and f"d = {res.linhas[-1]['d']:.1f} m" in caplog.text
+
+
+def test_verificacao_da_topologia_acha_o_beco_sem_saida_antes_da_largada(monkeypatch):
+    from mover.autonomo.rota import para_carla
+
+    carla, plano, sim = _simulador(monkeypatch)
+    assert sim.topologia == {"verificada": False}  # o waypoint falso não tem next()
+
+    class WaypointNaRota:
+        road_id, lane_id, is_junction = 257, -1, False
+        fim_m = 150.0
+
+        def __init__(self, d):
+            p = plano.rota.ponto(d)
+            x, y, _ = para_carla(p.x, p.y, p.rumo)
+            self.d, self.transform = d, carla.Transform(carla.Location(x, y, 0.0))
+
+        def next(self, passo):
+            return [] if self.d + passo > self.fim_m else [WaypointNaRota(self.d + passo)]
+
+    sim.mapa = types.SimpleNamespace(get_waypoint=lambda loc, **kw: WaypointNaRota(0.0))
+    problemas = sim.verificar_topologia()["problemas"]
+    assert [(p["tipo"], p["via"], p["faixa"]) for p in problemas] == [("beco sem saída", 257, -1)]
+    assert problemas[0]["s_m"] == pytest.approx(150.0, abs=2.5)
+    WaypointNaRota.fim_m = math.inf
+    resultado = sim.verificar_topologia()
+    assert resultado["problemas"] == [] and resultado["percorrido_m"] >= plano.comprimento
+    sim.encerrar()
+
+
+def test_juncoes_de_passagem_com_conector_minusculo_viram_ligacao_direta_no_mapa_do_carla(tmp_path):
+    import xml.etree.ElementTree as ET
+
+    from mover.autonomo.rota_mapa import rota_do_mapa
+    from mover.autonomo.xodr_carla import colapsar_juncoes_de_passagem
+    from mover.config import caminho
+
+    original = caminho("data/mapas/mapa_final.xodr").read_text(encoding="utf-8")
+    texto, feitas = colapsar_juncoes_de_passagem(original, 1.0)
+    por_conector = {f["conector"]: f for f in feitas}
+    assert por_conector["287"] == {"juncao": "11", "conector": "287", "conector_m": 0.112, "de": "257", "para": "258",
+                                   "sem_fresta": True}
+    assert all(f["conector_m"] < 1.0 for f in feitas) and "285" not in por_conector  # o conector de 11 m fica
+    raiz = ET.fromstring(texto)
+    estradas = {e.get("id"): e for e in raiz.findall("road")}
+    assert "287" not in estradas and "285" in estradas and raiz.find("junction[@id='11']") is None
+    assert estradas["257"].find("link/successor").attrib == {"elementType": "road", "elementId": "258", "contactPoint": "start"}
+    assert estradas["258"].find("link/predecessor").attrib == {"elementType": "road", "elementId": "257", "contactPoint": "end"}
+    assert estradas["257"].find(".//lane[@id='-1']/link/successor").get("id") == "-1"
+    assert estradas["258"].find(".//lane[@id='-1']/link/predecessor").get("id") == "-1"
+    assert float(estradas["257"].get("length")) == pytest.approx(106.9733078 + 0.11215534, abs=1e-6)
+    # o mapa ajustado continua lido igual: a mesma volta, do mesmo tamanho
+    ajustado = tmp_path / "mapa_carla.xodr"
+    ajustado.write_text(texto, encoding="utf-8")
+    vias = carregar_yaml("config/autonomo.yaml")["gerar_missao"]["rota"]["vias"]
+    tipos = ("driving", "restricted", "bidirectional", "parking")
+    antes, _ = rota_do_mapa(ler_xodr(caminho("data/mapas/mapa_final.xodr"), 0.5, tipos), vias)
+    depois, _ = rota_do_mapa(ler_xodr(ajustado, 0.5, tipos), vias)
+    assert depois.comprimento == pytest.approx(antes.comprimento, abs=1.0)
+    assert colapsar_juncoes_de_passagem("<OpenDRIVE/>", 1.0) == ("<OpenDRIVE/>", [])
+    assert colapsar_juncoes_de_passagem(original, 0.0) == (original, [])
 
 
 def test_camera_do_painel_presa_ao_caminhao_manda_jpeg_e_sai_antes_do_caminhao(monkeypatch):
