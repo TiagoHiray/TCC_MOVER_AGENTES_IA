@@ -44,7 +44,7 @@ import pandas as pd
 
 from mover.agentes.llm import PROVEDORES
 from mover.autonomo.canal_agentes import CanalAgentes, ErroAgentes
-from mover.autonomo.conducao import Conducao, OpcoesConducao, ResultadoConducao, metricas_da_corrida
+from mover.autonomo.conducao import Conducao, FimDoSimulador, OpcoesConducao, ResultadoConducao, metricas_da_corrida
 from mover.autonomo.montagem import Montagem, montar
 from mover.config import caminho, carregar_yaml
 
@@ -179,6 +179,8 @@ def rodar_bateria(m: Montagem, sim: Any, modo: str, voltas: int, canal: CanalAge
     governador = m.governador(modo, voltas)
     com_agentes = modo == "agentes" and canal is not None
     opcoes = OpcoesConducao(voltas=voltas, assincrona=False, sem_espera=True, duracao_bloco_s=m.duracao_bloco_s)
+    log.info("Bateria %s: %d volta(s), o mais rápido que o simulador aguenta (o log mostra cada volta).",
+             NOMES_MODO[modo], voltas)
     inicio = time.monotonic()
     resultado = Conducao(m.plano, sim, governador, canal if com_agentes else None, opcoes, m.caminhao, m.consumo,
                          imprimir=imprimir, planejador=m.planejador(voltas) if com_agentes else None).rodar()
@@ -235,13 +237,15 @@ def main(argv: list[str] | None = None) -> int:
         sim, _ = preparar_simulador(args_sim, m, cfg_sim, voltas)
         sim.iniciar()
         log.info("Benchmark no %s: %d volta(s) por bateria; plano de %.0f m por volta.", sim.nome, voltas, m.plano.comprimento)
+        if sim.nome == "carla" and not args.com_render:
+            log.info("O CARLA não desenha a cena durante o benchmark (a janela fica preta); use --com-render para ver.")
         res_bruto = rodar_bateria(m, sim, "bruto", voltas, None, imprimir)
         sim.reiniciar()
         res_agentes = rodar_bateria(m, sim, "agentes", voltas, canal, imprimir)
     except KeyboardInterrupt:
         log.warning("Benchmark interrompido (Ctrl+C).")
         return 130
-    except ErroAgentes as erro:
+    except (ErroAgentes, FimDoSimulador) as erro:
         log.error("%s", erro)
         return 1
     finally:

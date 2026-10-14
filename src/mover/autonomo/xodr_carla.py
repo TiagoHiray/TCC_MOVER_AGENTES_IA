@@ -150,13 +150,31 @@ def acrescentar_acostamentos(texto: str, largura_m: float = 2.0) -> tuple[str, i
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(raiz, encoding="unicode"), secoes
 
 
+def sem_georreferencia_ilegivel(texto: str) -> tuple[str, bool]:
+    """Tira o geoReference que o CARLA não lê (ele só entende +lat_0/+lon_0; o resto vira aviso e (0, 0)).
+
+    O projeto não usa a geolocalização do CARLA: as coordenadas saem do próprio .xodr (simulacao/projecao).
+    """
+    if "<geoReference" not in texto:
+        return texto, False
+    raiz = ET.fromstring(texto)
+    cabecalho = raiz.find("header")
+    geo = cabecalho.find("geoReference") if cabecalho is not None else None
+    if geo is None or "+lat_0" in (geo.text or ""):
+        return texto, False
+    cabecalho.remove(geo)
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(raiz, encoding="unicode"), True
+
+
 def preparar_para_carla(texto: str, cfg_opendrive: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
     """O texto que vai para generate_opendrive_world e o resumo dos ajustes (config: carla.opendrive)."""
     cfg = cfg_opendrive or {}
     texto, juncoes = colapsar_juncoes_de_passagem(texto, float(cfg.get("colapsar_conectores_m", 1.0)))
     largura = float(cfg.get("acostamento_m", 2.0))
     texto, secoes = acrescentar_acostamentos(texto, largura)
-    return texto, {"juncoes_colapsadas": juncoes, "acostamento_m": largura if secoes else 0.0, "secoes_com_acostamento": secoes}
+    texto, sem_geo = sem_georreferencia_ilegivel(texto)
+    return texto, {"juncoes_colapsadas": juncoes, "acostamento_m": largura if secoes else 0.0, "secoes_com_acostamento": secoes,
+                   "georreferencia_removida": sem_geo}
 
 
 __all__ = ["acrescentar_acostamentos", "colapsar_juncoes_de_passagem", "preparar_para_carla"]

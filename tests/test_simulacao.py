@@ -540,7 +540,8 @@ def test_simulador_carla_liga_o_piloto_automatico_le_a_telemetria_e_restaura_o_s
     p0 = plano.rota.ponto(0.0)
     assert (x, y, yaw) == pytest.approx((p0.x, -p0.y, -math.degrees(p0.rumo)), abs=1e-6)  # y e yaw do CARLA invertidos
     n_pontos = next(c[1] for c in carla.chamadas if c[0] == "caminho")
-    assert n_pontos == math.ceil((plano.comprimento + 30.0 - 8.0) / 10.0)  # caminho da largada até a chegada
+    fim = min(plano.comprimento + 30.0, min(300.0, 0.8 * plano.comprimento))  # caminho rolante, menos de uma volta
+    assert n_pontos == math.ceil((fim - 8.0) / 10.0)
 
     linhas = [sim.passo(5.0) for _ in range(60)]  # 3 s pedindo 18 km/h
     assert tm.desejada[ator.id] == pytest.approx(18.0)
@@ -667,7 +668,12 @@ def test_juncoes_de_passagem_com_conector_minusculo_viram_ligacao_direta_no_mapa
     assert depois.comprimento == pytest.approx(antes.comprimento, abs=1.0)
     assert colapsar_juncoes_de_passagem("<OpenDRIVE/>", 1.0) == ("<OpenDRIVE/>", [])
     assert colapsar_juncoes_de_passagem(original, 0.0) == (original, [])
-    assert preparar_para_carla(original, {"colapsar_conectores_m": 0, "acostamento_m": 0})[0] == original
+    assert preparar_para_carla("<OpenDRIVE/>", {}) == ("<OpenDRIVE/>", {"juncoes_colapsadas": [], "acostamento_m": 0.0,
+                                                                        "secoes_com_acostamento": 0,
+                                                                        "georreferencia_removida": False})
+    so_geo, info = preparar_para_carla(original, {"colapsar_conectores_m": 0, "acostamento_m": 0})
+    assert info["georreferencia_removida"] and "<geoReference" not in so_geo and "<geoReference" in original
+    assert ET.fromstring(so_geo).find("header").get("name") == ET.fromstring(original).find("header").get("name")
 
 
 def test_caminhao_preso_no_carla_encerra_a_corrida_mesmo_com_o_governador_pedindo_pouco(monkeypatch, caplog):
@@ -694,6 +700,41 @@ def test_caminhao_preso_no_carla_encerra_a_corrida_mesmo_com_o_governador_pedind
     sim.encerrar()
     assert res.motivo_fim == "preso" and res.linhas[-1]["t"] < 60.0
     assert "parado com alvo de" in caplog.text and "d = 6" in caplog.text
+
+
+def test_tick_sem_resposta_encerra_a_corrida_e_o_vigia_avisa_o_tick_travado(monkeypatch):
+    from mover.autonomo.carla_tm import VigiaTick
+    from mover.autonomo.conducao import Conducao, OpcoesConducao
+    from mover.autonomo.montagem import montar
+
+    carla, plano, sim = _simulador(monkeypatch)
+    world = carla.cliente.mundo
+    tick = world.tick
+
+    def tick_que_estoura():  # o cliente do CARLA desiste depois do timeout
+        if world.ticks > 100:
+            raise RuntimeError("time-out of 60000ms while waiting for the simulator")
+        return tick()
+
+    world.tick = tick_que_estoura
+    m = montar(carregar_yaml("config/autonomo.yaml"), plano=plano)
+    res = Conducao(plano, sim, m.governador("bruto", 1), None, OpcoesConducao(voltas=1, sem_espera=True)).rodar()
+    sim.encerrar()
+    assert res.motivo_fim == "sem_resposta" and len(res.linhas) == 101 - 20  # ticks 21 a 101; o 102º estoura
+
+    travados: list[float] = []
+    vigia = VigiaTick(0.2, travados.append)
+    vigia.comecar()
+    esperar(lambda: travados, prazo_s=3.0)
+    vigia.parar()
+    assert travados[0] > 0.2
+    calmo: list[float] = []
+    vigia = VigiaTick(0.2, calmo.append)
+    vigia.comecar()
+    vigia.terminar()
+    time.sleep(1.3)
+    vigia.parar()
+    assert calmo == []
 
 
 def test_camera_do_painel_presa_ao_caminhao_manda_jpeg_e_sai_antes_do_caminhao(monkeypatch):

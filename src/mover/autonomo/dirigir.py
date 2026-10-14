@@ -49,7 +49,7 @@ import pandas as pd
 from mover.agentes.llm import PROVEDORES
 from mover.autonomo.canal_agentes import CanalHttp, ErroAgentes
 from mover.autonomo.cliente import ClientePainel, ErroServidor, servidor_no_ar
-from mover.autonomo.conducao import Conducao, OpcoesConducao, ResultadoConducao, metricas_da_corrida
+from mover.autonomo.conducao import Conducao, FimDoSimulador, OpcoesConducao, ResultadoConducao, metricas_da_corrida
 from mover.autonomo.montagem import Montagem, montar
 from mover.config import caminho, carregar_yaml
 
@@ -203,6 +203,8 @@ def main(argv: list[str] | None = None) -> int:
             if not args.sem_carla and not args.sem_camera_painel:
                 sim.ligar_camera_painel(cliente.postar_quadro)
         sim.iniciar()
+        if args.sem_render and not args.sem_carla:
+            log.info("--sem-render: o CARLA não desenha a cena (a janela fica preta).")
 
         id_corrida = datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{modo}"
         pasta = caminho((cfg.get("corridas") or {}).get("pasta", "data/autonomo/corridas")) / id_corrida
@@ -268,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         log.warning("Interrompido (Ctrl+C).")
         codigo = 130
-    except (ErroServidor, ErroAgentes) as erro:
+    except (ErroServidor, ErroAgentes, FimDoSimulador) as erro:
         log.error("%s", erro)
         codigo = 1
     finally:
