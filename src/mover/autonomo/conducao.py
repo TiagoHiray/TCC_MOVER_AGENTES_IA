@@ -97,6 +97,8 @@ class OpcoesConducao:
     duracao_bloco_s: float = 10.0
     tempo_max_s: float = 0.0         # 0: 10 min por volta (proteção contra caminhão preso)
     parado_max_s: float = 30.0       # parado esse tempo pedindo para andar: encerra (caminhão preso)
+    max_desvio_m: float = 12.0       # mais longe que isso da rota por `fora_max_s`: encerra (saiu da rota)
+    fora_max_s: float = 3.0
 
 
 @dataclass
@@ -106,7 +108,7 @@ class ResultadoConducao:
     voltas: int
     linhas: list[dict[str, Any]] = field(default_factory=list)
     decisoes: list[dict[str, Any]] = field(default_factory=list)
-    motivo_fim: str = ""             # chegada | tempo_max | preso | removido | interrompido
+    motivo_fim: str = ""             # chegada | tempo_max | preso | fora_da_rota | removido | sem_resposta | interrompido
     duracao_real_s: float = 0.0
     atrasos_relogio: int = 0
     aplicacoes: dict[str, int] = field(default_factory=lambda: {"regra": 0, "trocas_llm": 0, "atrasadas": 0})
@@ -301,6 +303,8 @@ class Conducao:
         bloco = 0
         voltas_feitas = 0
         parado_desde: float | None = None
+        fora_desde: float | None = None
+        avisou_desvio = False
         try:
             if self.canal is not None:  # antes da largada: os dois primeiros blocos (a simulação espera)
                 self._decidir_agora(0, janela_inicial(0.0, dur))
@@ -354,6 +358,21 @@ class Conducao:
                     log.info("Chegada (%s): %d volta(s) em %.0f s de simulação, %.0f s de relógio.", gov.modo, op.voltas,
                              t, time.monotonic() - inicio)
                     break
+                desvio = abs(float(linha.get("desvio_m", 0.0) or 0.0))
+                if desvio > 4.0 and not avisou_desvio:
+                    avisou_desvio = True
+                    log.warning("O caminhão está a %.1f m da rota em d = %.1f m (x = %.1f, y = %.1f no mapa).", desvio, d,
+                                float(linha.get("x", math.nan)), float(linha.get("y", math.nan)))
+                if desvio > op.max_desvio_m:
+                    fora_desde = t if fora_desde is None else fora_desde
+                    if t - fora_desde > op.fora_max_s:
+                        res.motivo_fim = "fora_da_rota"
+                        log.error("O caminhão saiu da rota: %.1f m dela há %.0f s, depois de d = %.1f m (x = %.1f, y = %.1f "
+                                  "no mapa); corrida encerrada.", desvio, t - fora_desde, d,
+                                  float(linha.get("x", math.nan)), float(linha.get("y", math.nan)))
+                        break
+                else:
+                    fora_desde = None
                 alvo = float(ultimo.get("v_alvo_kmh") or 0.0) / 3.6
                 # saindo da imobilidade o governador pede pouco (~1 km/h): vale o alvo, fora das paradas
                 if (v_des > 1.0 or alvo > 1.0) and not ultimo.get("parado") and v < 0.1:

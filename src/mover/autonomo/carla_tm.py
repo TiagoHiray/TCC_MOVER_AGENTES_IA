@@ -42,7 +42,7 @@ PADRAO_TM: dict[str, Any] = {
     "semente": 7,
     "passo_caminho_m": 10.0,     # distância entre os pontos do caminho passado ao TM
     "inicio_caminho_m": 8.0,     # o caminho começa um pouco à frente do caminhão
-    "horizonte_caminho_m": 300.0,  # caminho rolante, renovado na metade; nunca mais de 0,8 volta
+    "horizonte_caminho_m": 6000.0,  # o caminho da corrida inteira vai de uma vez; só corridas maiores são renovadas
     "distancia_lider_m": 4.0,
     "clima": "ClearNoon",
     "acomodar_ticks": 20,        # ticks com freio de mão depois de criar o caminhão (assentar na pista)
@@ -324,14 +324,15 @@ class SimuladorCarla:
                 self._vigia.terminar()
 
     def _definir_caminho(self, d: float) -> None:
-        """Caminho do TM: os pontos da rota à frente do caminhão, até a chegada ou até o horizonte.
+        """Caminho do TM: os pontos da rota à frente do caminhão, até 30 m depois da chegada.
 
-        Nunca passa de 0,8 volta: um caminho que passa duas vezes pelo mesmo lugar confunde o TM.
+        Vai de uma vez só: renovar no meio da corrida esvazia o buffer do TM, que relocaliza o caminhão pelo
+        waypoint mais próximo e, perto de uma junção, pode pegar outra faixa e sair da rota.
         """
         carla = self.carla
         L = self.rota.comprimento
         passo = float(self.ctm["passo_caminho_m"])
-        self._horizonte_caminho = min(float(self.ctm["horizonte_caminho_m"]), 0.8 * L)
+        self._horizonte_caminho = float(self.ctm["horizonte_caminho_m"])
         fim = min(self.voltas * L + 30.0, d + self._horizonte_caminho)  # passa da chegada: o governador para antes
         pontos = []
         dist = d + float(self.ctm["inicio_caminho_m"])
@@ -429,7 +430,7 @@ class SimuladorCarla:
         self._d = self.rota.avancar_distancia(self._d, s)
         chegada = self.voltas * self.rota.comprimento + 30.0
         if self._caminho_ate < chegada - 1e-6 and self._d > self._caminho_ate - 0.5 * self._horizonte_caminho:
-            self._definir_caminho(self._d)  # caminho rolante: renova na metade do horizonte
+            self._definir_caminho(self._d)  # só em corridas mais longas que o horizonte
         controle = self.ator.get_control()
         linha = {
             "frame": self.frame,

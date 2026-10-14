@@ -540,8 +540,7 @@ def test_simulador_carla_liga_o_piloto_automatico_le_a_telemetria_e_restaura_o_s
     p0 = plano.rota.ponto(0.0)
     assert (x, y, yaw) == pytest.approx((p0.x, -p0.y, -math.degrees(p0.rumo)), abs=1e-6)  # y e yaw do CARLA invertidos
     n_pontos = next(c[1] for c in carla.chamadas if c[0] == "caminho")
-    fim = min(plano.comprimento + 30.0, min(300.0, 0.8 * plano.comprimento))  # caminho rolante, menos de uma volta
-    assert n_pontos == math.ceil((fim - 8.0) / 10.0)
+    assert n_pontos == math.ceil((plano.comprimento + 30.0 - 8.0) / 10.0)  # a corrida inteira de uma vez
 
     linhas = [sim.passo(5.0) for _ in range(60)]  # 3 s pedindo 18 km/h
     assert tm.desejada[ator.id] == pytest.approx(18.0)
@@ -700,6 +699,30 @@ def test_caminhao_preso_no_carla_encerra_a_corrida_mesmo_com_o_governador_pedind
     sim.encerrar()
     assert res.motivo_fim == "preso" and res.linhas[-1]["t"] < 60.0
     assert "parado com alvo de" in caplog.text and "d = 6" in caplog.text
+
+
+def test_caminhao_que_sai_da_rota_encerra_a_corrida_com_a_posicao(monkeypatch, caplog):
+    from mover.autonomo.conducao import Conducao, OpcoesConducao
+    from mover.autonomo.montagem import montar
+
+    carla, plano, sim = _simulador(monkeypatch)
+    tm = carla.cliente.tm
+    mover = tm.mover
+
+    def mover_e_desviar(ator, dt):  # o TM pega outra faixa: o caminhão anda, mas longe da rota
+        mover(ator, dt)
+        if ator.s_caminho > 60.0:
+            loc = ator.tf.location
+            ator.tf = carla.Transform(carla.Location(loc.x, loc.y + 8.0, loc.z), ator.tf.rotation)
+
+    tm.mover = mover_e_desviar
+    m = montar(carregar_yaml("config/autonomo.yaml"), plano=plano)
+    op = OpcoesConducao(voltas=1, sem_espera=True, max_desvio_m=5.0)
+    with caplog.at_level(logging.WARNING, logger="mover.autonomo"):
+        res = Conducao(plano, sim, m.governador("bruto", 1), None, op).rodar()
+    sim.encerrar()
+    assert res.motivo_fim == "fora_da_rota" and "m da rota em d = 6" in caplog.text
+    assert "O caminhão saiu da rota" in caplog.text
 
 
 def test_tick_sem_resposta_encerra_a_corrida_e_o_vigia_avisa_o_tick_travado(monkeypatch):
