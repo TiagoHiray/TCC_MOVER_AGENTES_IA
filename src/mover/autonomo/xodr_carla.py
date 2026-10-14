@@ -1,11 +1,14 @@
-"""Ajusta o .xodr antes de o CARLA gerar o mundo: junções de passagem com conector minúsculo viram ligação direta.
+"""Ajusta o .xodr antes de o CARLA gerar o mundo (o arquivo em disco não muda).
 
-O mapa_final.xodr (convertido do SUMO) tem junções de passagem: uma via chega, um conector de 0,1 a
-0,6 m liga à via seguinte, e nada mais. Na primeira corrida no CARLA, o Traffic Manager removeu o
-caminhão logo antes da primeira junção com conector de 0,11 m (via 257 -> conector 287 -> via 258).
-Aqui cada uma delas vira uma ligação direta via -> via (links da via e das faixas); o conector e a
-junção saem. Se a última geometria da via que chega for uma reta no rumo do conector, ela cresce o
-comprimento do conector, sem deixar fresta. O arquivo em disco não muda.
+1. Acostamentos: todas as vias do mapa_final.xodr têm uma faixa só, de 3,2 m, sem nada ao lado; fora
+   dela o CARLA não gera chão. Um caminhão de ~2,9 m que corta a curva põe as rodas de dentro fora da
+   malha e fica preso (na VM: parado a 82,5 m, z = -0,11 m, 1 m à direita da rota, e o Traffic Manager
+   acabou removendo-o). Cada via ganha um acostamento (faixa "shoulder", que o TM não usa) de cada
+   lado; a faixa de direção continua no mesmo lugar.
+2. Junções de passagem (convertidas do SUMO): uma via chega, um conector de 0,1 a 0,6 m liga à via
+   seguinte, e nada mais. Cada uma vira uma ligação direta via -> via (links da via e das faixas); o
+   conector e a junção saem. Se a última geometria da via que chega for uma reta no rumo do conector,
+   ela cresce o comprimento do conector, sem deixar fresta.
 """
 
 from __future__ import annotations
@@ -117,4 +120,43 @@ def colapsar_juncoes_de_passagem(texto: str, limiar_m: float = 1.0) -> tuple[str
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(raiz, encoding="unicode"), feitas
 
 
-__all__ = ["colapsar_juncoes_de_passagem"]
+def _acostamento(faixa_id: int, largura_m: float) -> ET.Element:
+    faixa = ET.Element("lane", {"id": str(faixa_id), "type": "shoulder", "level": "true"})
+    ET.SubElement(faixa, "link")
+    ET.SubElement(faixa, "width", {"sOffset": "0", "a": f"{largura_m:.2f}", "b": "0", "c": "0", "d": "0"})
+    return faixa
+
+
+def acrescentar_acostamentos(texto: str, largura_m: float = 2.0) -> tuple[str, int]:
+    """Um acostamento de `largura_m` de cada lado de cada via. Devolve o texto e quantas seções mudaram."""
+    if largura_m <= 0.0 or "<laneSection" not in texto:
+        return texto, 0
+    raiz = ET.fromstring(texto)
+    secoes = 0
+    for secao in raiz.iter("laneSection"):
+        esquerda, centro, direita = secao.find("left"), secao.find("center"), secao.find("right")
+        if centro is None:
+            continue
+        if esquerda is None:
+            esquerda = ET.Element("left")
+            secao.insert(list(secao).index(centro), esquerda)
+        if direita is None:
+            direita = ET.SubElement(secao, "right")
+        ids_esq = [int(f.get("id")) for f in esquerda.findall("lane")]
+        ids_dir = [int(f.get("id")) for f in direita.findall("lane")]
+        esquerda.insert(0, _acostamento(max(ids_esq, default=0) + 1, largura_m))  # o OpenDRIVE lista da borda para o centro
+        direita.append(_acostamento(min(ids_dir, default=0) - 1, largura_m))
+        secoes += 1
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(raiz, encoding="unicode"), secoes
+
+
+def preparar_para_carla(texto: str, cfg_opendrive: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+    """O texto que vai para generate_opendrive_world e o resumo dos ajustes (config: carla.opendrive)."""
+    cfg = cfg_opendrive or {}
+    texto, juncoes = colapsar_juncoes_de_passagem(texto, float(cfg.get("colapsar_conectores_m", 1.0)))
+    largura = float(cfg.get("acostamento_m", 2.0))
+    texto, secoes = acrescentar_acostamentos(texto, largura)
+    return texto, {"juncoes_colapsadas": juncoes, "acostamento_m": largura if secoes else 0.0, "secoes_com_acostamento": secoes}
+
+
+__all__ = ["acrescentar_acostamentos", "colapsar_juncoes_de_passagem", "preparar_para_carla"]

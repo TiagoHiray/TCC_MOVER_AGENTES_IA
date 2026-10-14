@@ -155,9 +155,9 @@ class CenaCarla:
                 smooth_junctions=bool(p.get("smooth_junctions", True)), enable_mesh_visibility=True,
                 enable_pedestrian_navigation=bool(p.get("enable_pedestrian_navigation", True)))
             log.info("Gerando o mundo OpenDRIVE no CARLA...")
-            from mover.autonomo.xodr_carla import colapsar_juncoes_de_passagem
+            from mover.autonomo.xodr_carla import preparar_para_carla
 
-            texto_xodr, _ = colapsar_juncoes_de_passagem(texto_xodr, float(p.get("colapsar_conectores_m", 1.0)))
+            texto_xodr, _ = preparar_para_carla(texto_xodr, p)
             self.world = self.client.generate_opendrive_world(texto_xodr, parametros)
         self._config_original = self.world.get_settings()
         config = self.world.get_settings()
