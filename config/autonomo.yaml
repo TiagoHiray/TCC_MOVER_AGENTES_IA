@@ -74,7 +74,7 @@ carla:
   semente: 7
   passo_caminho_m: 10              # pontos da rota passados ao Traffic Manager (set_path)
   clima: ClearNoon                 # um dos carla.WeatherParameters
-  telemetria_motor: false          # rpm e marcha a cada tick (get_telemetry_data)
+  telemetria_motor: true           # rpm e marcha de verdade a cada tick (get_telemetry_data), para o diagnóstico
 
 corridas:
   pasta: data/autonomo/corridas    # telemetria.csv, decisoes.jsonl, resumo.json e a gravação do CARLA

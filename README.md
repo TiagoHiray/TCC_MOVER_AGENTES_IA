@@ -302,6 +302,13 @@ cada decisão, então o resultado não depende da velocidade do computador. Saí
 - `comparativo.png`: velocidade na 1ª volta e diesel por volta;
 - `telemetria_sem_agentes.csv`, `telemetria_com_agentes.csv` e `decisoes.jsonl`.
 
+Para ver onde o caminhão andou devagar e o que o governador pedia ali (velocidade desejada, alvo, quem
+limitava, pedais, oscilação e trocas de marcha), por trechos de 10 m:
+
+```bash
+python -m mover.autonomo.diagnostico ../data/benchmark/<data>/telemetria_com_agentes.csv
+```
+
 As colunas do `resultados.csv` são:
 
 - tempo, distância e velocidade média;

@@ -46,7 +46,7 @@ PADRAO_TM: dict[str, Any] = {
     "distancia_lider_m": 4.0,
     "clima": "ClearNoon",
     "acomodar_ticks": 20,        # ticks com freio de mão depois de criar o caminhão (assentar na pista)
-    "telemetria_motor": False,   # get_telemetry_data a cada tick (rpm e marcha; custa um pouco)
+    "telemetria_motor": True,    # get_telemetry_data a cada tick: rpm e a marcha de verdade (diagnóstico)
     "max_tick_s": 90.0,          # tick que não volta nesse tempo de relógio: o CARLA ou o TM travou
 }
 
@@ -130,6 +130,7 @@ class SimuladorCarla:
         self._ultima: dict[str, Any] = {}
         self.topologia: dict[str, Any] | None = None
         self.ajustes_mapa: dict[str, Any] = {}
+        self.fisica: dict[str, Any] = {}
         self._vigia: VigiaTick | None = None
         self._horizonte_caminho = 0.0
         self.frame = 0
@@ -284,6 +285,7 @@ class SimuladorCarla:
         if self.ator is None:
             raise RuntimeError("não foi possível criar o caminhão na largada da rota (local ocupado?)")
         log.info("Caminhão %s criado (id %d) na largada, com física.", self.ator.type_id, self.ator.id)
+        self._registrar_fisica()
         # assenta na pista com o freio de mão antes de ligar o piloto automático
         self.ator.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0, hand_brake=True))
         for _ in range(int(self.ctm["acomodar_ticks"])):
@@ -310,6 +312,18 @@ class SimuladorCarla:
         self._t_inicio = float(self.world.get_snapshot().timestamp.elapsed_seconds)
         self._ultima = {}
         self.frame = 0
+
+    def _registrar_fisica(self) -> None:
+        """Loga a física do veículo: troca de marcha lenta e freio-motor forte fazem o caminhão oscilar com acelerador parcial."""
+        try:
+            f = self.ator.get_physics_control()
+            self.fisica = {"massa_kg": round(float(f.mass)), "marchas": len(f.forward_gears),
+                           "troca_marcha_s": round(float(f.gear_switch_time), 2), "cambio_automatico": bool(f.use_gear_autobox),
+                           "rpm_max": round(float(f.max_rpm)),
+                           "amortecimento_sem_acelerador": round(float(f.damping_rate_zero_throttle_clutch_engaged), 2)}
+        except (RuntimeError, AttributeError, TypeError):
+            return
+        log.info("Física do caminhão no CARLA: %s", ", ".join(f"{k} {v}" for k, v in self.fisica.items()))
 
     def _tick(self) -> None:
         if self._vigia is not None:

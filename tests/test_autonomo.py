@@ -298,6 +298,12 @@ def test_corrida_com_agentes_gasta_menos_e_nao_tem_trancos(m):
     linha = agentes.linhas[-1]
     assert linha["combustivel_ml"] > 0 and linha["modo"] == "agentes" and linha["v_desejada_kmh"] == 0.0
     assert {"t", "speed_kmh", "v_limite_kmh", "custo_r", "co2_g", "bloco", "volta"} <= set(linha)
+    # o diagnóstico por trecho soma o tempo da corrida e diz quem limitava em cada trecho
+    from mover.autonomo.diagnostico import resumo_por_trecho
+
+    tabela = resumo_por_trecho(pd.DataFrame(agentes.linhas))
+    assert tabela["tempo_s"].sum() == pytest.approx(len(agentes.linhas) * 0.05)
+    assert {"v_desejada_kmh", "v_alvo_kmh", "limitado_por", "modo_tick", "trocas_acel", "trocas_marcha"} <= set(tabela)
 
 
 def test_corrida_ao_vivo_com_agentes_numa_thread_e_llm_lento(m):
