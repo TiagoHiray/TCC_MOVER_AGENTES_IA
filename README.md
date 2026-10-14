@@ -542,7 +542,7 @@ data/          mapas/ (entrada), modelos/, autonomo/, benchmark/ (saídas)
 python -m pytest tests -q
 ```
 
-São 99 testes, sem CARLA e sem LLM de verdade (rodam da raiz do repositório). O lado CARLA é testado com um módulo `carla` falso (um Traffic Manager que leva o caminhão pelo caminho) e o LLM, com o provedor falso e um "LLM de roteiro". Eles conferem que:
+São 102 testes, sem CARLA e sem LLM de verdade (rodam da raiz do repositório). O lado CARLA é testado com um módulo `carla` falso (um Traffic Manager que leva o caminhão pelo caminho) e o LLM, com o provedor falso e um "LLM de roteiro". Eles conferem que:
 
 - o plano do caminhão sai do estado medido na corrida atual, com as decisões bruscas e a zona de cada uma;
 - as manobras vêm do Traffic Manager (`get_all_actions`) ou, sem ele, da rota;
@@ -566,6 +566,7 @@ São 99 testes, sem CARLA e sem LLM de verdade (rodam da raiz do repositório). 
 - **O efeito da alteração é previsto antes e medido depois.** Os números que valem são os medidos no benchmark no CARLA.
 - **O consumo é estimado** pelo VT-CPFM: o CARLA não tem combustível.
 - **Nada foi rodado no CARLA de verdade aqui.** O desenvolvimento foi feito sem CARLA e sem GPU. O lado CARLA foi conferido contra a API do pacote 0.9.16 e testado com um módulo falso. Na primeira corrida no CARLA, confira se o caminhão segue a rota (`set_path`), se `get_all_actions` devolve as manobras (senão, o plano usa a curvatura da rota) e se a reprodução da gravação carrega o mapa OpenDRIVE (senão, use `--modo poses` no vídeo).
+- **O mapa mandado ao CARLA é ajustado.** Na primeira corrida no CARLA, o Traffic Manager removeu o caminhão logo antes de uma junção de passagem com conector de 0,11 m (via 257 -> 258). Antes de gerar o mundo, as junções de passagem com conector menor que `carla.opendrive.colapsar_conectores_m` (1 m) viram ligação direta via -> via (`src/mover/autonomo/xodr_carla.py`; o arquivo em disco não muda). Na largada, o log confere a topologia do CARLA ao longo da rota; se o caminhão ainda for removido, a corrida termina com `motivo_fim = "removido"`, grava o que andou e o log diz a via e a posição.
 - **A latência do LLM depende da máquina.** Sem GPU, o gemma2:2b pode passar do prazo de 6 s, e então as decisões ficam com a regra (o log mostra o motivo).
 
 ## Legado

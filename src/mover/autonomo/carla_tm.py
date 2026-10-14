@@ -27,7 +27,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
+from mover.autonomo.conducao import FimDoSimulador
 from mover.autonomo.rota import Rota, de_carla, para_carla
+from mover.autonomo.xodr_carla import colapsar_juncoes_de_passagem
 from mover.simulacao.camera_painel import PADRAO_CAMERA_PAINEL, CameraPainel
 
 log = logging.getLogger("mover.autonomo")
@@ -85,6 +87,9 @@ class SimuladorCarla:
         self._d = 0.0
         self._caminho_ate = 0.0
         self._yaw_camera: float | None = None
+        self._ultima: dict[str, Any] = {}
+        self.topologia: dict[str, Any] | None = None
+        self.ajustes_mapa: list[dict[str, Any]] = []
         self.frame = 0
         self.hora_inicio = datetime.now().astimezone()
 
@@ -135,7 +140,13 @@ class SimuladorCarla:
                 enable_pedestrian_navigation=bool(p.get("enable_pedestrian_navigation", True)),
             )
             log.info("Gerando o mundo OpenDRIVE no CARLA (pode levar alguns segundos)...")
-            self.world = self.client.generate_opendrive_world(self.texto_xodr, parametros)
+            texto, self.ajustes_mapa = colapsar_juncoes_de_passagem(self.texto_xodr,
+                                                                    float(p.get("colapsar_conectores_m", 1.0)))
+            if self.ajustes_mapa:
+                log.info("Mapa para o CARLA: %d junção(ões) de passagem com conector < %.1f m viraram ligação direta "
+                         "(conectores %s).", len(self.ajustes_mapa), float(p.get("colapsar_conectores_m", 1.0)),
+                         ", ".join(a["conector"] for a in self.ajustes_mapa))
+            self.world = self.client.generate_opendrive_world(texto, parametros)
         self._config_original = self.world.get_settings()
         config = self.world.get_settings()
         config.synchronous_mode = True
@@ -151,7 +162,58 @@ class SimuladorCarla:
         if clima is not None:
             self.world.set_weather(clima)
         self.spectator = self.world.get_spectator()
+        self.topologia = self.verificar_topologia()
         self._criar_caminhao()
+
+    def verificar_topologia(self, passo_m: float = 2.0, max_desvio_m: float = 3.0) -> dict[str, Any]:
+        """Anda pelos waypoints do CARLA ao longo da rota, como o Traffic Manager vai fazer.
+
+        O TM remove o veículo quando a faixa à frente não tem continuação no mapa do CARLA (beco sem
+        saída). Isso aparece aqui antes da largada, com a via e a posição na rota.
+        """
+        carla = self.carla
+        try:
+            wp = self.mapa.get_waypoint(self._transform_largada().location, project_to_road=True,
+                                        lane_type=carla.LaneType.Driving)
+        except (RuntimeError, AttributeError):
+            wp = None
+        if wp is None or not hasattr(wp, "next"):
+            return {"verificada": False}
+        L = self.rota.comprimento
+        s_atual, andado, problemas = 0.0, 0.0, []
+        while andado < L:
+            proximos = wp.next(passo_m)
+            if not proximos:
+                problemas.append({"tipo": "beco sem saída", **self._onde(wp, s_atual)})
+                break
+            escolhido = None
+            for candidato in proximos:  # o TM escolhe o ramo mais perto do caminho (set_path)
+                loc = candidato.transform.location
+                x, y, _ = de_carla(float(loc.x), float(loc.y), 0.0)
+                s, lateral = self.rota.projetar(x, y, s_atual)
+                if escolhido is None or abs(lateral) < abs(escolhido[2]):
+                    escolhido = (candidato, s, lateral)
+            wp, s_atual, lateral = escolhido
+            andado += passo_m
+            if abs(lateral) > max_desvio_m:
+                problemas.append({"tipo": f"a faixa do CARLA sai da rota ({lateral:.1f} m)", **self._onde(wp, s_atual)})
+                break
+        resultado = {"verificada": True, "percorrido_m": round(andado, 1), "problemas": problemas}
+        if problemas:
+            p = problemas[0]
+            log.warning("Topologia do CARLA: %s em s = %.0f m da volta (via %s, faixa %s%s). O Traffic Manager remove o "
+                        "caminhão quando a faixa à frente não tem continuação: confira os links dessa via no .xodr.",
+                        p["tipo"], p["s_m"], p["via"], p["faixa"], ", junção" if p["juncao"] else "")
+        else:
+            log.info("Topologia do CARLA: a rota de %.0f m tem continuação em todas as faixas.", L)
+        return resultado
+
+    @staticmethod
+    def _onde(wp: Any, s: float) -> dict[str, Any]:
+        loc = wp.transform.location
+        return {"s_m": round(float(s), 1), "via": getattr(wp, "road_id", None), "faixa": getattr(wp, "lane_id", None),
+                "juncao": bool(getattr(wp, "is_junction", False)), "x_carla": round(float(loc.x), 1),
+                "y_carla": round(float(loc.y), 1)}
 
     # ------------------------------------------------------------------ caminhão
     def _transform_largada(self) -> Any:
@@ -293,9 +355,14 @@ class SimuladorCarla:
         self.tm.set_desired_speed(self.ator, max(0.0, float(v_desejada)) * 3.6)
         self.world.tick()
         self.frame += 1
+        if not getattr(self.ator, "is_alive", True):
+            raise FimDoSimulador("removido", self._diagnostico_remocao())
         snap = self.world.get_snapshot()
         t = float(snap.timestamp.elapsed_seconds) - self._t_inicio
-        tf = self.ator.get_transform()
+        try:
+            tf = self.ator.get_transform()
+        except RuntimeError:  # destruído entre o tick e a leitura
+            raise FimDoSimulador("removido", self._diagnostico_remocao()) from None
         vel, acc, ang = self.ator.get_velocity(), self.ator.get_acceleration(), self.ator.get_angular_velocity()
         frente, direita = tf.get_forward_vector(), tf.get_right_vector()
         v = max(0.0, _escalar(vel, frente))
@@ -335,7 +402,25 @@ class SimuladorCarla:
                 pass
         if not self.sem_render:
             self._camera_simulador(tf)
+        self._ultima = linha
         return linha
+
+    def _diagnostico_remocao(self) -> str:
+        u = self._ultima
+        texto = (f"o CARLA removeu o caminhão no tick {self.frame}. Último estado: d = {u.get('d', 0.0):.1f} m "
+                 f"(s = {u.get('s', 0.0):.1f} m na volta), {3.6 * u.get('speed_mps', 0.0):.0f} km/h, "
+                 f"z = {u.get('z', 0.0):.2f} m, desvio da rota {u.get('desvio_m', 0.0):.1f} m")
+        try:
+            loc = self.carla.Location(x=u["x_carla"], y=u["y_carla"], z=u["z"])
+            wp = self.mapa.get_waypoint(loc, project_to_road=True, lane_type=self.carla.LaneType.Driving)
+            texto += f", via {wp.road_id} faixa {wp.lane_id}{' (junção)' if wp.is_junction else ''}"
+        except (KeyError, RuntimeError, AttributeError):
+            pass
+        problemas = (self.topologia or {}).get("problemas") or []
+        if problemas:
+            texto += f". A verificação da topologia achou {problemas[0]['tipo']} em s = {problemas[0]['s_m']:.0f} m"
+        return (texto + ". Causas prováveis: a faixa à frente não tem continuação no mapa do CARLA (o Traffic Manager "
+                "remove o veículo num beco sem saída) ou o caminhão caiu da pista (z muito baixo).")
 
     def _camera_simulador(self, tf: Any = None) -> None:
         """A câmera da janela do CARLA (spectator) segue o caminhão, com o giro suavizado."""

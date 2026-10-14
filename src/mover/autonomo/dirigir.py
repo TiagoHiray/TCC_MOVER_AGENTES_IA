@@ -244,6 +244,8 @@ def main(argv: list[str] | None = None) -> int:
                  "fonte_linha_de_base": (linha_base or {}).get("fonte"), "suavizador_ml": ml_nome,
                  "agentes_http": url if canal is not None else None,
                  "requisicoes_agentes": canal.requisicoes if canal is not None else 0,
+                 "topologia_carla": getattr(sim, "topologia", None),
+                 "ajustes_mapa_carla": getattr(sim, "ajustes_mapa", None),
                  "preco_r_l": m.consumo.preco_r_l, "combustivel": m.consumo.combustivel}
         if hasattr(sim, "parar_gravacao"):
             sim.parar_gravacao()
