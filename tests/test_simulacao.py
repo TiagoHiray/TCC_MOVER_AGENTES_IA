@@ -725,6 +725,25 @@ def test_caminhao_que_sai_da_rota_encerra_a_corrida_com_a_posicao(monkeypatch, c
     assert "O caminhão saiu da rota" in caplog.text
 
 
+def test_caminho_do_tm_nao_tem_pontos_dentro_das_juncoes(monkeypatch):
+    from mover.autonomo.rota import para_carla
+
+    carla, plano, sim = _simulador(monkeypatch)
+    p = plano.rota.ponto(100.0)
+    cx, cy, _ = para_carla(p.x, p.y, p.rumo)
+
+    class WaypointFalso:
+        def __init__(self, loc):  # uma junção de ~20 m em volta de d = 100 m
+            self.is_junction = math.hypot(loc.x - cx, loc.y - cy) < 10.0
+
+    sim.mapa = types.SimpleNamespace(get_waypoint=lambda loc, **kw: WaypointFalso(loc))
+    sim._definir_caminho(0.0)
+    caminho = carla.cliente.tm.caminho[1:]  # o 1º é a posição do caminhão
+    assert caminho and all(math.hypot(x - cx, y - cy) >= 10.0 for x, y in caminho)
+    assert len(caminho) == math.ceil((plano.comprimento + 30.0 - 8.0) / 10.0) - 2  # 98 e 108 m ficam de fora
+    sim.encerrar()
+
+
 def test_tick_sem_resposta_encerra_a_corrida_e_o_vigia_avisa_o_tick_travado(monkeypatch):
     from mover.autonomo.carla_tm import VigiaTick
     from mover.autonomo.conducao import Conducao, OpcoesConducao
