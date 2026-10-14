@@ -290,8 +290,8 @@ cd src
 python -m mover.autonomo.benchmark --voltas 3
 ```
 
-Roda no CARLA sem desenhar a cena (`no_rendering_mode`, mais rápido); use `--com-render` para
-acompanhar. Primeiro vêm N voltas com o caminhão sozinho, executando o próprio plano sem
+Roda no CARLA sem desenhar a cena (`no_rendering_mode`, mais rápido: a janela do CARLA fica preta, e o log
+mostra o fim de cada volta); use `--com-render` para acompanhar. Primeiro vêm N voltas com o caminhão sozinho, executando o próprio plano sem
 alteração. Depois o caminhão volta à largada e faz N voltas com os agentes alterando o plano de
 cada bloco. As duas baterias rodam na mesma execução, e uma não lê a outra. A simulação espera
 cada decisão, então o resultado não depende da velocidade do computador. Saída em
@@ -542,7 +542,7 @@ data/          mapas/ (entrada), modelos/, autonomo/, benchmark/ (saídas)
 python -m pytest tests -q
 ```
 
-São 103 testes, sem CARLA e sem LLM de verdade (rodam da raiz do repositório). O lado CARLA é testado com um módulo `carla` falso (um Traffic Manager que leva o caminhão pelo caminho) e o LLM, com o provedor falso e um "LLM de roteiro". Eles conferem que:
+São 104 testes, sem CARLA e sem LLM de verdade (rodam da raiz do repositório). O lado CARLA é testado com um módulo `carla` falso (um Traffic Manager que leva o caminhão pelo caminho) e o LLM, com o provedor falso e um "LLM de roteiro". Eles conferem que:
 
 - o plano do caminhão sai do estado medido na corrida atual, com as decisões bruscas e a zona de cada uma;
 - as manobras vêm do Traffic Manager (`get_all_actions`) ou, sem ele, da rota;
@@ -566,7 +566,7 @@ São 103 testes, sem CARLA e sem LLM de verdade (rodam da raiz do repositório).
 - **O efeito da alteração é previsto antes e medido depois.** Os números que valem são os medidos no benchmark no CARLA.
 - **O consumo é estimado** pelo VT-CPFM: o CARLA não tem combustível.
 - **Nada foi rodado no CARLA de verdade aqui.** O desenvolvimento foi feito sem CARLA e sem GPU. O lado CARLA foi conferido contra a API do pacote 0.9.16 e testado com um módulo falso. Na primeira corrida no CARLA, confira se o caminhão segue a rota (`set_path`), se `get_all_actions` devolve as manobras (senão, o plano usa a curvatura da rota) e se a reprodução da gravação carrega o mapa OpenDRIVE (senão, use `--modo poses` no vídeo).
-- **O mapa mandado ao CARLA é ajustado** (`src/mover/autonomo/xodr_carla.py`; o arquivo em disco não muda). As vias do `mapa_final.xodr` têm uma faixa só, de 3,2 m, sem chão ao lado: na VM, o caminhão cortou uma curva, ficou com as rodas fora da malha (parado a 82,5 m, z = -0,11 m) e o Traffic Manager acabou removendo-o. Antes de gerar o mundo, cada via ganha um acostamento de 2 m de cada lado (`carla.opendrive.acostamento_m`, faixa que o TM não usa), e as junções de passagem com conector menor que 1 m viram ligação direta via -> via (`colapsar_conectores_m`). Na largada, o log confere a topologia do CARLA ao longo da rota. Se o caminhão ficar parado 30 s com alvo acima de 3,6 km/h, a corrida termina como `preso`; se o CARLA o remover, como `removido`; nos dois casos ela grava o que andou e o log diz a posição, o `z` e o desvio da rota.
+- **O mapa mandado ao CARLA é ajustado** (`src/mover/autonomo/xodr_carla.py`; o arquivo em disco não muda). As vias do `mapa_final.xodr` têm uma faixa só, de 3,2 m, sem chão ao lado: na VM, o caminhão cortou uma curva, ficou com as rodas fora da malha (parado a 82,5 m, z = -0,11 m) e o Traffic Manager acabou removendo-o. Antes de gerar o mundo, cada via ganha um acostamento de 2 m de cada lado (`carla.opendrive.acostamento_m`, faixa que o TM não usa), e as junções de passagem com conector menor que 1 m viram ligação direta via -> via (`colapsar_conectores_m`). Na largada, o log confere a topologia do CARLA ao longo da rota. Se o caminhão ficar parado 30 s com alvo acima de 3,6 km/h, a corrida termina como `preso`; se o CARLA o remover, como `removido`; se o CARLA não responder ao tick, como `sem_resposta`; nos três casos ela grava o que andou e o log diz a posição, o `z` e o desvio da rota. O caminho passado ao Traffic Manager (`set_path`) é rolante, com no máximo 300 m (nunca uma volta inteira), e um vigia encerra o processo com aviso se um tick não voltar em 90 s (o TM síncrono roda no processo do caminhão e, travado, nem o Ctrl+C funciona).
 - **A latência do LLM depende da máquina.** Sem GPU, o gemma2:2b pode passar do prazo de 6 s, e então as decisões ficam com a regra (o log mostra o motivo).
 
 ## Legado

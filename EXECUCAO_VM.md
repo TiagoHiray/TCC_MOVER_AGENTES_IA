@@ -63,8 +63,10 @@ python -m mover.autonomo.benchmark --voltas 3 --provedor falso
 python -m mover.autonomo.benchmark --voltas 3                  # com o Ollama no ar (LLM de verdade)
 ```
 
-Já roda sem desenhar a cena (use `--com-render` para acompanhar). Saída em `data\benchmark\<data>\`:
-`resultados.csv`, `resumo.json`, `comparativo.png` e as telemetrias das duas baterias.
+Já roda sem desenhar a cena: a janela do CARLA fica preta, e isso é o esperado (use `--com-render` para ver).
+O log mostra o início de cada bateria e o fim de cada volta (cerca de 200 s de simulação; poucos segundos de
+relógio cada). Saída em `data\benchmark\<data>\`: `resultados.csv`, `resumo.json`, `comparativo.png` e as
+telemetrias das duas baterias. Os números só valem se as duas baterias terminarem com `chegada`.
 
 Agentes noutra máquina (ou num terminal à parte):
 
@@ -84,6 +86,10 @@ python -m mover.autonomo.benchmark --voltas 3 --servidor http://<ip>:8000  # má
 
 - **CARLA travado depois de uma falha no script:** ele fica esperando o próximo passo do modo síncrono.
   Feche e abra de novo. O Ctrl+C normal devolve o CARLA ao modo assíncrono.
+- **Tick travado:** se o CARLA (ou o Traffic Manager) não devolver um passo em 90 s, o script encerra sozinho
+  com a mensagem "O tick do CARLA não voltou". Feche o CARLA, abra de novo e rode outra vez.
+- **`preso`, `removido` ou `sem_resposta` no fim:** a corrida grava o que andou; a linha de erro do log diz
+  `d`, `z` e o desvio da rota. Mande essa linha para análise.
 - **Porta 8000 ocupada:** o `dirigir` com página usa o servidor que já estiver nela; sem página e no benchmark,
   os agentes sobem numa porta livre. O Traffic Manager usa a 8100 e o CARLA, a 2000.
 - **"plano de missão diferente"** ao abrir a sessão dos agentes: o servidor remoto tem outro `config/missao.yaml`;

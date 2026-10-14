@@ -95,7 +95,7 @@ class OpcoesConducao:
     sem_espera: bool = False         # não segue o relógio (o mais rápido possível)
     lote_s: float = 0.5              # telemetria mandada ao servidor a cada 0,5 s de simulação
     duracao_bloco_s: float = 10.0
-    tempo_max_s: float = 0.0         # 0: 5 min por volta (proteção contra caminhão preso)
+    tempo_max_s: float = 0.0         # 0: 10 min por volta (proteção contra caminhão preso)
     parado_max_s: float = 30.0       # parado esse tempo pedindo para andar: encerra (caminhão preso)
 
 
@@ -292,13 +292,14 @@ class Conducao:
         self._resultado = res
         dt = float(sim.dt)
         dur = float(op.duracao_bloco_s)
-        tempo_max = op.tempo_max_s or 300.0 * op.voltas
+        tempo_max = op.tempo_max_s or 600.0 * op.voltas
         medidor = MedidorConsumo(self.caminhao, self.consumo)
         relogio = Relogio(op.fator_tempo, op.sem_espera)
         inicio = time.monotonic()
         lote: list[dict[str, Any]] = []
         proximo_lote = op.lote_s
         bloco = 0
+        voltas_feitas = 0
         parado_desde: float | None = None
         try:
             if self.canal is not None:  # antes da largada: os dois primeiros blocos (a simulação espera)
@@ -334,6 +335,10 @@ class Conducao:
                 })
                 res.linhas.append(linha)
                 lote.append(linha)
+                if d >= (voltas_feitas + 1) * self.plano.comprimento and voltas_feitas < op.voltas:
+                    voltas_feitas += 1
+                    log.info("Volta %d de %d (%s): %.0f s de simulação, %.0f s de relógio.", voltas_feitas, op.voltas,
+                             gov.modo, t, time.monotonic() - inicio)
                 if t >= proximo_lote - 1e-9:
                     self._mandar(lote)
                     lote = []
@@ -346,6 +351,8 @@ class Conducao:
                         relogio.ancorar(t)  # a espera pelos agentes não conta como atraso
                 if gov.terminou and v <= 0.05:
                     res.motivo_fim = "chegada"
+                    log.info("Chegada (%s): %d volta(s) em %.0f s de simulação, %.0f s de relógio.", gov.modo, op.voltas,
+                             t, time.monotonic() - inicio)
                     break
                 alvo = float(ultimo.get("v_alvo_kmh") or 0.0) / 3.6
                 # saindo da imobilidade o governador pede pouco (~1 km/h): vale o alvo, fora das paradas
