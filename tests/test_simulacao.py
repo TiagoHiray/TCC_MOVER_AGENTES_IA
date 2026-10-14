@@ -632,7 +632,7 @@ def test_juncoes_de_passagem_com_conector_minusculo_viram_ligacao_direta_no_mapa
     import xml.etree.ElementTree as ET
 
     from mover.autonomo.rota_mapa import rota_do_mapa
-    from mover.autonomo.xodr_carla import colapsar_juncoes_de_passagem
+    from mover.autonomo.xodr_carla import colapsar_juncoes_de_passagem, preparar_para_carla
     from mover.config import caminho
 
     original = caminho("data/mapas/mapa_final.xodr").read_text(encoding="utf-8")
@@ -650,6 +650,14 @@ def test_juncoes_de_passagem_com_conector_minusculo_viram_ligacao_direta_no_mapa
     assert estradas["258"].find(".//lane[@id='-1']/link/predecessor").get("id") == "-1"
     assert float(estradas["257"].get("length")) == pytest.approx(106.9733078 + 0.11215534, abs=1e-6)
     # o mapa ajustado continua lido igual: a mesma volta, do mesmo tamanho
+    texto, ajustes = preparar_para_carla(original, {"colapsar_conectores_m": 1.0, "acostamento_m": 2.0})
+    assert ajustes["acostamento_m"] == 2.0 and len(ajustes["juncoes_colapsadas"]) == len(feitas)
+    raiz = ET.fromstring(texto)
+    for secao in raiz.iter("laneSection"):  # acostamento dos dois lados; a faixa de direção não muda
+        faixas = {f.get("id"): f for f in secao.iter("lane")}
+        assert faixas["1"].get("type") == faixas["-2"].get("type") == "shoulder"
+        assert faixas["-1"].get("type") == "driving" and faixas["-2"].find("width").get("a") == "2.00"
+    assert [c.tag for c in raiz.find("road[@id='257']/lanes/laneSection")] == ["left", "center", "right"]
     ajustado = tmp_path / "mapa_carla.xodr"
     ajustado.write_text(texto, encoding="utf-8")
     vias = carregar_yaml("config/autonomo.yaml")["gerar_missao"]["rota"]["vias"]
@@ -659,6 +667,33 @@ def test_juncoes_de_passagem_com_conector_minusculo_viram_ligacao_direta_no_mapa
     assert depois.comprimento == pytest.approx(antes.comprimento, abs=1.0)
     assert colapsar_juncoes_de_passagem("<OpenDRIVE/>", 1.0) == ("<OpenDRIVE/>", [])
     assert colapsar_juncoes_de_passagem(original, 0.0) == (original, [])
+    assert preparar_para_carla(original, {"colapsar_conectores_m": 0, "acostamento_m": 0})[0] == original
+
+
+def test_caminhao_preso_no_carla_encerra_a_corrida_mesmo_com_o_governador_pedindo_pouco(monkeypatch, caplog):
+    from mover.autonomo.conducao import Conducao, OpcoesConducao
+    from mover.autonomo.montagem import montar
+
+    carla, plano, sim = _simulador(monkeypatch)
+    tm = carla.cliente.tm
+    mover = tm.mover
+
+    def mover_ate_encalhar(ator, dt):  # as rodas saem da malha: o TM acelera e o caminhão não sai do lugar
+        if ator.s_caminho > 60.0:
+            ator.v, ator.a = 0.0, 0.0
+            return
+        mover(ator, dt)
+
+    tm.mover = mover_ate_encalhar
+    m = montar(carregar_yaml("config/autonomo.yaml"), plano=plano)
+    decisor = m.decisor(1)
+    op = OpcoesConducao(voltas=1, usar_llm=False, assincrona=False, sem_espera=True, parado_max_s=5.0)
+    with caplog.at_level(logging.ERROR, logger="mover.autonomo"):
+        res = Conducao(plano, sim, m.governador("agentes", 1), decisor, op).rodar()
+    decisor.encerrar()
+    sim.encerrar()
+    assert res.motivo_fim == "preso" and res.linhas[-1]["t"] < 60.0
+    assert "parado com alvo de" in caplog.text and "d = 6" in caplog.text
 
 
 def test_camera_do_painel_presa_ao_caminhao_manda_jpeg_e_sai_antes_do_caminhao(monkeypatch):

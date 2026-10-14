@@ -29,7 +29,7 @@ from typing import Any, Callable
 
 from mover.autonomo.conducao import FimDoSimulador
 from mover.autonomo.rota import Rota, de_carla, para_carla
-from mover.autonomo.xodr_carla import colapsar_juncoes_de_passagem
+from mover.autonomo.xodr_carla import preparar_para_carla
 from mover.simulacao.camera_painel import PADRAO_CAMERA_PAINEL, CameraPainel
 
 log = logging.getLogger("mover.autonomo")
@@ -89,7 +89,7 @@ class SimuladorCarla:
         self._yaw_camera: float | None = None
         self._ultima: dict[str, Any] = {}
         self.topologia: dict[str, Any] | None = None
-        self.ajustes_mapa: list[dict[str, Any]] = []
+        self.ajustes_mapa: dict[str, Any] = {}
         self.frame = 0
         self.hora_inicio = datetime.now().astimezone()
 
@@ -140,12 +140,11 @@ class SimuladorCarla:
                 enable_pedestrian_navigation=bool(p.get("enable_pedestrian_navigation", True)),
             )
             log.info("Gerando o mundo OpenDRIVE no CARLA (pode levar alguns segundos)...")
-            texto, self.ajustes_mapa = colapsar_juncoes_de_passagem(self.texto_xodr,
-                                                                    float(p.get("colapsar_conectores_m", 1.0)))
-            if self.ajustes_mapa:
-                log.info("Mapa para o CARLA: %d junção(ões) de passagem com conector < %.1f m viraram ligação direta "
-                         "(conectores %s).", len(self.ajustes_mapa), float(p.get("colapsar_conectores_m", 1.0)),
-                         ", ".join(a["conector"] for a in self.ajustes_mapa))
+            texto, self.ajustes_mapa = preparar_para_carla(self.texto_xodr, p)
+            juncoes = self.ajustes_mapa["juncoes_colapsadas"]
+            log.info("Mapa para o CARLA: acostamento de %.1f m dos dois lados das vias; %d junção(ões) de passagem "
+                     "viraram ligação direta%s.", self.ajustes_mapa["acostamento_m"], len(juncoes),
+                     f" (conectores {', '.join(a['conector'] for a in juncoes)})" if juncoes else "")
             self.world = self.client.generate_opendrive_world(texto, parametros)
         self._config_original = self.world.get_settings()
         config = self.world.get_settings()

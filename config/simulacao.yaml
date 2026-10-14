@@ -53,8 +53,11 @@ carla:
     enable_mesh_visibility: true
     enable_pedestrian_navigation: true
     # junções de passagem (uma via -> conector -> outra via) com conector menor que isto viram ligação
-    # direta no mapa mandado ao CARLA; o TM removia o caminhão no conector de 0,11 m. 0 desliga
+    # direta no mapa mandado ao CARLA. 0 desliga
     colapsar_conectores_m: 1.0
+    # as vias têm uma faixa só, de 3,2 m: sem chão ao lado, o caminhão que corta a curva fica preso.
+    # Acostamento (faixa que o Traffic Manager não usa) de cada lado, só no mapa do CARLA. 0 desliga
+    acostamento_m: 2.0
 
 veiculo:
   blueprint: vehicle.carlamotors.european_hgv

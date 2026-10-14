@@ -347,12 +347,15 @@ class Conducao:
                 if gov.terminou and v <= 0.05:
                     res.motivo_fim = "chegada"
                     break
-                if v_des > 1.0 and v < 0.1:
+                alvo = float(ultimo.get("v_alvo_kmh") or 0.0) / 3.6
+                # saindo da imobilidade o governador pede pouco (~1 km/h): vale o alvo, fora das paradas
+                if (v_des > 1.0 or alvo > 1.0) and not ultimo.get("parado") and v < 0.1:
                     parado_desde = t if parado_desde is None else parado_desde
                     if t - parado_desde > op.parado_max_s:
                         res.motivo_fim = "preso"
-                        log.error("O caminhão ficou %.0f s parado pedindo %.0f km/h; corrida encerrada.",
-                                  t - parado_desde, v_des * 3.6)
+                        log.error("O caminhão ficou %.0f s parado com alvo de %.0f km/h (pedindo %.1f km/h) em d = %.1f m, "
+                                  "z = %.2f m, %.1f m da rota; corrida encerrada.", t - parado_desde, alvo * 3.6,
+                                  v_des * 3.6, d, float(linha.get("z", math.nan)), float(linha.get("desvio_m", math.nan)))
                         break
                 else:
                     parado_desde = None
