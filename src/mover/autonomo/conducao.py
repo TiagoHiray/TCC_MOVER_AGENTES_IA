@@ -8,26 +8,28 @@ A cada tick (20 Hz):
 4. ao entrar num bloco de 10 s, o caminhão monta o plano do bloco seguinte a partir do estado atual
    da corrida (mover.autonomo.planejador) e o manda aos agentes, antes de executá-lo.
 
-Cada decisão chega em duas etapas: primeiro a da regra (rápida, aplicada na hora) e depois a do
+O caminhão fala com os agentes por um canal (canal_agentes.py): na corrida, por HTTP com o servidor
+dos agentes, como um caminhão real ligado a um servidor; nos testes, no próprio processo. Cada
+decisão chega em duas etapas: primeiro a da regra (rápida, aplicada na hora) e depois a do
 Supervisor (LLM, com prazo), que pode trocar a alteração enquanto o caminhão ainda não chegou ao
-elemento. Ao vivo, os agentes rodam numa thread e a corrida não espera por eles. No benchmark, a
-simulação espera cada decisão, e o resultado não depende da velocidade do computador.
+elemento. Ao vivo, a corrida não espera os agentes. No benchmark, a simulação espera cada decisão,
+e o resultado não depende da velocidade do computador.
 """
 
 from __future__ import annotations
 
-import concurrent.futures as futures
 import logging
 import math
-import queue
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 import numpy as np
 
-from mover.agentes.decisao import Decisao, Decisor, janela_do_bloco, janela_inicial
+from mover.agentes.decisao import Decisor, janela_do_bloco, janela_inicial
+from mover.agentes.servico import ServicoAgentes
 from mover.agentes.telemetria_viva import MedidorConsumo
+from mover.autonomo.canal_agentes import CanalAgentes, CanalLocal
 from mover.autonomo.consumo import Limiares, ParametrosConsumo, metricas
 from mover.autonomo.governador import NOMES_OPCAO, Governador, Intervencao
 from mover.autonomo.missao import PlanoMissao
@@ -80,7 +82,7 @@ class Relogio:
 class OpcoesConducao:
     voltas: int = 1
     usar_llm: bool = True
-    assincrona: bool = True          # decisões numa thread (ao vivo); False: a simulação espera (benchmark)
+    assincrona: bool = True          # ao vivo: não espera os agentes; False: a simulação espera (benchmark)
     fator_tempo: float = 1.0
     sem_espera: bool = False         # não segue o relógio (o mais rápido possível)
     lote_s: float = 0.5              # telemetria mandada ao servidor a cada 0,5 s de simulação
@@ -131,9 +133,14 @@ def metricas_da_corrida(resultado: ResultadoConducao, comprimento_m: float, cami
 
 
 class Conducao:
-    """Uma corrida de N voltas num modo (bruto: o piloto sozinho; agentes: com a camada agêntica)."""
+    """Uma corrida de N voltas num modo (bruto: o piloto sozinho; agentes: com a camada agêntica).
 
-    def __init__(self, plano: PlanoMissao, simulador: Simulador, governador: Governador, decisor: Decisor | None = None,
+    `agentes` é o canal com a camada agêntica (CanalHttp na corrida) ou um Decisor, que vira um
+    CanalLocal no próprio processo.
+    """
+
+    def __init__(self, plano: PlanoMissao, simulador: Simulador, governador: Governador,
+                 agentes: Decisor | CanalAgentes | None = None,
                  opcoes: OpcoesConducao | None = None, caminhao: ParametrosCaminhao | None = None,
                  consumo: ParametrosConsumo | None = None,
                  ao_lote: Callable[[list[dict[str, Any]]], None] | None = None,
@@ -142,21 +149,29 @@ class Conducao:
         self.plano = plano
         self.sim = simulador
         self.gov = governador
-        self.decisor = decisor if governador.modo == "agentes" else None
-        # o lado do caminhão: monta o plano dos próximos 10 s a partir da corrida atual
-        self.planejador = planejador or (self.decisor.planejador() if self.decisor is not None else None)
         self.op = opcoes or OpcoesConducao()
+        self.canal: CanalAgentes | None = None
+        self._canal_proprio = False
+        if governador.modo == "agentes" and agentes is not None:
+            if isinstance(agentes, CanalAgentes):
+                self.canal = agentes
+            else:
+                self.canal = CanalLocal(ServicoAgentes(agentes, self.op.usar_llm), proprio=True)
+                self._canal_proprio = True
+                planejador = planejador or agentes.planejador()
+        if self.canal is not None and planejador is None:
+            raise ValueError("com um canal de agentes, passe o planejador do caminhão")
+        # o lado do caminhão: monta o plano dos próximos 10 s a partir da corrida atual
+        self.planejador = planejador
         self.caminhao = caminhao or ParametrosCaminhao()
         self.consumo = consumo or ParametrosConsumo()
         self.ao_lote = ao_lote
         self.ao_decisao = ao_decisao
         self.imprimir = imprimir or (lambda texto: None)
         self.estado = {"t": 0.0, "d": 0.0, "v": 0.0, "a": 0.0}
-        self._fila: queue.Queue = queue.Queue()
-        self._executor: futures.ThreadPoolExecutor | None = None
-        self._futuro: futures.Future | None = None
         self._pendente: tuple[int, tuple[float, float]] | None = None
         self._dono: dict[str, int] = {}          # elemento -> decisão (bloco) que o definiu
+        self._falhas_canal = 0
         self._resultado: ResultadoConducao | None = None
 
     # ------------------------------------------------------------------ decisões
@@ -175,95 +190,90 @@ class Conducao:
         return self.planejador.planejar(self.gov, dict(self.estado), bloco, janela, acoes)
 
     def _pedir(self, bloco: int, janela: tuple[float, float]) -> None:
-        if self.decisor is None:
+        if self.canal is None:
             return
         if not self.op.assincrona:
             self._decidir_agora(bloco, janela)
             return
-        if self._futuro is None or self._futuro.done():
-            self._lancar(bloco, janela)
-        else:  # os agentes ainda trabalham no pedido anterior: este espera (só o mais novo)
+        if self.canal.ocupado:  # os agentes ainda trabalham no pedido anterior: este espera (só o mais novo)
             self._pendente = (bloco, janela)
+        else:
+            self._lancar(bloco, janela)
 
     def _lancar(self, bloco: int, janela: tuple[float, float]) -> None:
         plano = self._planejar(bloco, janela)  # o caminhão monta o plano agora e o manda aos agentes
         if plano is None:
             return
-        if self._executor is None:
-            self._executor = futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="agentes")
-        self._futuro = self._executor.submit(self._trabalho, plano, self.gov.clonar())
-
-    def _trabalho(self, plano: PlanoFuturo, governador: Governador) -> None:
-        """Na thread dos agentes: regra primeiro (vai para o caminhão na hora), depois o Supervisor."""
-        decisao = self.decisor.avaliar(plano, governador)
-        if decisao is None:
-            return
-        self._fila.put(("regra", decisao.bloco, decisao.intervencoes_para(decisao.recomendada, self.decisor.opcoes, "regra")))
-        if self.op.usar_llm:
-            self.decisor.supervisionar(decisao)
-        self._fila.put(("final", decisao))
+        try:
+            self.canal.pedir(plano, self.gov, esperar=False)
+        except Exception as erro:  # servidor fora do ar: a corrida segue sem esta decisão
+            log.error("O plano do bloco %d não chegou aos agentes (%s); a corrida segue sem esta decisão.", bloco, erro)
 
     def _decidir_agora(self, bloco: int, janela: tuple[float, float]) -> None:
         plano = self._planejar(bloco, janela)
-        decisao = self.decisor.avaliar(plano, self.gov)
-        if decisao is None:
+        if plano is None:
             return
-        self._aplicar(("regra", decisao.bloco, decisao.intervencoes_para(decisao.recomendada, self.decisor.opcoes, "regra")))
-        if self.op.usar_llm:
-            self.decisor.supervisionar(decisao)
-        self._aplicar(("final", decisao))
+        for mensagem in self.canal.pedir(plano, self.gov, esperar=True):
+            self._aplicar(mensagem)
 
     def _recolher(self) -> None:
-        while True:
-            try:
-                item = self._fila.get_nowait()
-            except queue.Empty:
-                break
-            self._aplicar(item)
-        if self._futuro is not None and self._futuro.done():
-            erro = self._futuro.exception()
-            if erro is not None:
-                log.error("Erro na camada agêntica (a corrida segue sem esta decisão): %s: %s", type(erro).__name__, erro)
-            self._futuro = None
-            if self._pendente is not None:
-                bloco, janela = self._pendente
-                self._pendente = None
-                self._lancar(bloco, janela)
+        if self.canal is None:
+            return
+        try:
+            mensagens = self.canal.recolher()
+            self._falhas_canal = 0
+        except Exception as erro:  # a corrida segue; a busca é refeita no próximo tick
+            self._falhas_canal += 1
+            if self._falhas_canal == 1:
+                log.warning("Falha ao buscar as decisões dos agentes (%s); a corrida continua.", erro)
+            mensagens = []
+        for mensagem in mensagens:
+            self._aplicar(mensagem)
+        if not self.canal.ocupado and self._pendente is not None:
+            bloco, janela = self._pendente
+            self._pendente = None
+            self._lancar(bloco, janela)
 
-    def _aplicar(self, item: tuple) -> None:
+    def _aplicar(self, mensagem: dict[str, Any]) -> None:
         res = self._resultado
-        if item[0] == "regra":
-            _, bloco, intervencoes = item
-            for chave, interv in intervencoes.items():
+        etapa = mensagem.get("etapa")
+        if etapa == "erro":
+            log.error("Erro na camada agêntica (a corrida segue sem esta decisão): %s", mensagem.get("mensagem"))
+            return
+        if etapa == "regra":
+            bloco = int(mensagem["bloco"])
+            for chave, dados in mensagem["intervencoes"].items():
                 if self.gov.decidida(chave):
                     continue  # já decidido por outra decisão (pedidos que se cruzaram)
                 if self.gov.pode_intervir(chave):
-                    self.gov.definir(chave, interv)
+                    self.gov.definir(chave, Intervencao(**dados))
                     self._dono[chave] = bloco
                     res.aplicacoes["regra"] += 1
                 else:
                     res.aplicacoes["atrasadas"] += 1
             return
-        decisao: Decisao = item[1]
-        aplicada = []
-        if decisao.escolhida != decisao.recomendada:  # o Supervisor trocou a alteração da regra
-            trocas = decisao.intervencoes_para(decisao.escolhida, self.decisor.opcoes, decisao.origem)
-            for chave, interv in trocas.items():
-                if self._dono.get(chave) == decisao.bloco and self.gov.pode_intervir(chave):
-                    self.gov.definir(chave, interv)
+        if etapa != "final":
+            return
+        bloco = int(mensagem["bloco"])
+        escolhida = mensagem["escolhida"]
+        if escolhida != mensagem["recomendada"]:  # o Supervisor trocou a alteração da regra
+            for chave, dados in (mensagem.get("trocas") or {}).items():
+                if self._dono.get(chave) == bloco and self.gov.pode_intervir(chave):
+                    self.gov.definir(chave, Intervencao(**dados))
                     res.aplicacoes["trocas_llm"] += 1
-        for inst in decisao.instancias:
-            interv = self.gov.intervencoes.get(inst["chave"])
-            aplicada.append({"chave": inst["chave"], "opcao": interv.opcao if interv else None,
-                             "a_tempo": self._dono.get(inst["chave"]) == decisao.bloco})
-        entrada = decisao.para_entrada()
+        aplicada = []
+        for chave in mensagem["chaves"]:
+            interv = self.gov.intervencoes.get(chave)
+            aplicada.append({"chave": chave, "opcao": interv.opcao if interv else None,
+                             "a_tempo": self._dono.get(chave) == bloco})
+        entrada = dict(mensagem["entrada"])
         entrada["aplicacao"] = aplicada
         entrada["t_aplicada"] = round(self.estado["t"], 2)
         res.decisoes.append(entrada)
-        origem = "LLM" if decisao.origem == "llm" else "regra"
-        self.imprimir(f"[{self.estado['t']:6.1f} s] decisão do bloco {decisao.bloco:02d}: "
-                      f"{NOMES_OPCAO.get(decisao.escolhida, decisao.escolhida)} ({origem}, {decisao.latencia_s:.1f} s) - "
-                      f"{decisao.texto}")
+        origem = "LLM" if mensagem["origem"] == "llm" else "regra"
+        self.imprimir(f"[{self.estado['t']:6.1f} s] decisão do bloco {bloco:02d}: "
+                      f"{NOMES_OPCAO.get(escolhida, escolhida)} ({origem}, {float(mensagem['latencia_s']):.1f} s) - "
+                      f"{mensagem['texto']}")
         if self.ao_decisao is not None:
             self.ao_decisao(entrada)
 
@@ -283,7 +293,7 @@ class Conducao:
         bloco = 0
         parado_desde: float | None = None
         try:
-            if self.decisor is not None:  # antes da largada: os dois primeiros blocos (a simulação espera)
+            if self.canal is not None:  # antes da largada: os dois primeiros blocos (a simulação espera)
                 self._decidir_agora(0, janela_inicial(0.0, dur))
             relogio.ancorar(0.0)
             while True:
@@ -357,16 +367,16 @@ class Conducao:
                 log.warning("Falha ao mandar a telemetria: %s", erro)
 
     def _encerrar_agentes(self) -> None:
-        if self._executor is not None:
-            self._executor.shutdown(wait=False, cancel_futures=True)
-            self._executor = None
+        if self.canal is None:
+            return
         try:  # decisões que ficaram prontas no fim: vão para o log, mas não mudam mais nada
-            while True:
-                item = self._fila.get_nowait()
-                if item[0] == "final":
-                    self._aplicar(item)
-        except queue.Empty:
-            pass
+            for mensagem in self.canal.recolher(forcar=True):
+                if mensagem.get("etapa") == "final":
+                    self._aplicar(mensagem)
+        except Exception as erro:
+            log.warning("Decisões do fim da corrida não recolhidas: %s", erro)
+        if self._canal_proprio:
+            self.canal.encerrar()
 
 
 __all__ = ["Conducao", "OpcoesConducao", "Relogio", "ResultadoConducao", "Simulador", "metricas_da_corrida"]
