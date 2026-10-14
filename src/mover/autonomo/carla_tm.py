@@ -339,11 +339,26 @@ class SimuladorCarla:
         while dist < fim:
             p = self.rota.ponto(dist)
             x, y, _ = para_carla(p.x, p.y, p.rumo)
-            pontos.append(carla.Location(x=x, y=y, z=0.0))
+            local = carla.Location(x=x, y=y, z=0.0)
+            if not self._dentro_de_juncao(local):
+                pontos.append(local)
             dist += passo
         self.tm.set_path(self.ator, pontos, True)
         self._caminho_ate = fim
         log.debug("Caminho do TM: %d pontos de d = %.0f a %.0f m.", len(pontos), d, fim)
+
+    def _dentro_de_juncao(self, local: Any) -> bool:
+        """Pontos dentro de jun\u00e7\u00f5es ficam fora do caminho do TM.
+
+        Numa bifurca\u00e7\u00e3o, o TM escolhe o ramo cuja sa\u00edda est\u00e1 na mesma via do pr\u00f3ximo ponto do caminho; se esse
+        ponto ainda est\u00e1 dentro da jun\u00e7\u00e3o, ele escolhe pela dist\u00e2ncia e pode errar (na VM, a 751 m da volta,
+        ele pegou o conector 306 em vez do 305 e saiu da rota).
+        """
+        try:
+            wp = self.mapa.get_waypoint(local, project_to_road=True, lane_type=self.carla.LaneType.Driving)
+        except (RuntimeError, AttributeError):
+            return False
+        return bool(getattr(wp, "is_junction", False)) if wp is not None else False
 
     def _remover_caminhao(self) -> None:
         if self.camera_painel is not None:

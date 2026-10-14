@@ -175,6 +175,19 @@ def test_governador_nao_aceita_intervencao_depois_da_frenagem_bruta(m):
     assert not gov.decidida("lombada_2@0")  # o clone não muda o original
 
 
+def test_governador_nao_deixa_o_caminhao_rastejando_com_um_piloto_que_ignora_pedidos_pequenos(m):
+    # o TM do CARLA quase não acelera um caminhão de 9 t pedindo +1 km/h: aqui, abaixo de 0,4 m/s de diferença, nada
+    gov = m.governador("agentes", 1)
+    gov.definir("partida@0", Intervencao.da_opcao("suave", m.opcoes))
+    d, v, v_max, dt = 0.0, 0.0, 0.0, 0.05
+    for _ in range(int(20.0 / dt)):
+        v_des = gov.velocidade_desejada(d, v, 0.0, dt)
+        v = v + 0.8 * dt if v_des - v > 0.4 else max(0.0, v - 0.2 * dt)
+        d, v_max = d + v * dt, max(v_max, v)
+    assert v_max > 2.0 and d > 20.0  # na trava antiga, o caminhão ficava abaixo de 0,5 m/s para sempre
+    assert gov.cfg.soltar_freio_s == 1.5
+
+
 def test_consumo_so_marcha_lenta_freando_e_metricas_contam_eventos():
     c, p = ParametrosCaminhao(), ParametrosConsumo()
     freando = taxa_combustivel_l_s(potencia_rodas_kw(np.array([8.0]), np.array([-3.0]), 0.0, c), p)[0]

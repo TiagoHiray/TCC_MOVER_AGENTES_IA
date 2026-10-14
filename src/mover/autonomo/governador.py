@@ -72,6 +72,7 @@ class ConfigGovernador:
     v_parar_mps: float = 0.15
     abaixo_do_limite_mps: float = 0.3   # o envelope mira ~1 km/h abaixo do limite da zona
     ressincronizar_mps: float = 1.5
+    soltar_freio_s: float = 1.5         # saindo da imobilidade, a referência fica colada na velocidade só por esse tempo
     desacel_recuperacao_mps2: float = 2.5
     horizonte_m: float = 250.0
     olhar_atras_m: float = 80.0
@@ -114,6 +115,7 @@ class Governador:
         self._v_ref = 0.0
         self._a_ref = 0.0
         self._a_avanco = 0.0
+        self._lento_s = 0.0
         self.terminou = False
         self.ultimo: dict[str, Any] = {}
 
@@ -162,6 +164,7 @@ class Governador:
             "v_ref": float(self._v_ref),
             "a_ref": float(self._a_ref),
             "a_avanco": float(self._a_avanco),
+            "lento_s": float(self._lento_s),
             "terminou": bool(self.terminou),
             "ultimo": dict(self.ultimo),
         }
@@ -178,6 +181,7 @@ class Governador:
         self._v_ref = float(estado.get("v_ref", 0.0))
         self._a_ref = float(estado.get("a_ref", 0.0))
         self._a_avanco = float(estado.get("a_avanco", 0.0))
+        self._lento_s = float(estado.get("lento_s", 0.0))
         self.terminou = bool(estado.get("terminou", False))
         self.ultimo = dict(estado.get("ultimo") or {})
         return self
@@ -266,8 +270,10 @@ class Governador:
         if lim.parada and lim.v < 0.5:
             # fim de parada: a desaceleração some junto com a velocidade (sem tranco ao parar)
             a_desejada = max(a_desejada, -cfg.ganho_parada * self._v_ref)
-        if v < 0.5 and self._v_ref - v > 0.25 and a_desejada > 0.0:
-            # saindo da imobilidade: o freio ainda está soltando; não acumula pedido de aceleração
+        self._lento_s = self._lento_s + dt if v < 0.5 else 0.0
+        if v < 0.5 and self._v_ref - v > 0.25 and a_desejada > 0.0 and self._lento_s < cfg.soltar_freio_s:
+            # saindo da imobilidade: o freio ainda está soltando; não acumula pedido de aceleração. Depois disso a
+            # referência volta a crescer: o piloto do CARLA quase não acelera um caminhão pedindo +1 km/h
             self._v_ref = v + 0.25
             a_desejada = min(a_desejada, 0.2)
         passo = cfg.jerk_max_mps3 * dt
@@ -304,7 +310,7 @@ class Governador:
         return _Limite(v_env, inst.chave, "suave", interv, inst.e_parada)
 
     def _parado(self, chave: str) -> float:
-        self._v_ref, self._a_ref, self._a_avanco = 0.0, 0.0, 0.0
+        self._v_ref, self._a_ref, self._a_avanco, self._lento_s = 0.0, 0.0, 0.0, 0.0
         self.ultimo = {"v_alvo_kmh": 0.0, "v_desejada_kmh": 0.0, "limitado_por": chave, "modo_tick": "parado",
                        "parado": True}
         return 0.0
