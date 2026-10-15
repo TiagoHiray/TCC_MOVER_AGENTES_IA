@@ -147,7 +147,11 @@ class CenaCarla:
         self.world = self.client.get_world()
 
     def carregar_mapa(self, texto_xodr: str | None) -> None:
-        if texto_xodr:
+        if texto_xodr and self.cc.get("mapa_carla"):
+            from mover.autonomo.carla_tm import carregar_mapa_instalado
+
+            self.world = carregar_mapa_instalado(self.client, str(self.cc["mapa_carla"]))
+        elif texto_xodr:
             p = self.cc.get("opendrive", {})
             parametros = self.carla.OpendriveGenerationParameters(
                 vertex_distance=float(p.get("vertex_distance", 2.0)), max_road_length=float(p.get("max_road_length", 50.0)),
@@ -155,9 +159,9 @@ class CenaCarla:
                 smooth_junctions=bool(p.get("smooth_junctions", True)), enable_mesh_visibility=True,
                 enable_pedestrian_navigation=bool(p.get("enable_pedestrian_navigation", True)))
             log.info("Gerando o mundo OpenDRIVE no CARLA...")
-            from mover.autonomo.xodr_carla import preparar_para_carla
-
-            texto_xodr, _ = preparar_para_carla(texto_xodr, p)
+            # preparos do mapa_final.xodr, desligados com o campus_maua.xodr (o mapa vai ao CARLA como é):
+            # from mover.autonomo.xodr_carla import preparar_para_carla
+            # texto_xodr, _ = preparar_para_carla(texto_xodr, p)
             self.world = self.client.generate_opendrive_world(texto_xodr, parametros)
         self._config_original = self.world.get_settings()
         config = self.world.get_settings()
