@@ -7,7 +7,7 @@ Uso, a partir da pasta src/:
 O que sai de cada fonte (nenhuma gravação de celular entra no plano):
 - mapa do CARLA (mapa_final.xodr): a rota. O itinerário (gerar_missao.rota.vias no
   config/autonomo.yaml) diz por quais vias a volta passa; os conectores das junções são achados
-  no grafo de faixas, e a rota segue o centro das faixas no sentido de tráfego (horário nesse mapa);
+  no grafo de faixas, e a rota segue o centro das faixas no sentido de tráfego (anti-horário no campus_maua.xodr);
 - geometria da rota: zonas de curva, com o limite dado pela aceleração lateral máxima;
 - objetos do mapa (campus_maua.xodr): lombadas (speedBump) e faixas de pedestre (crosswalk);
 - OSM do campus: portões (barrier=gate) perto da rota e, se o mapa não tiver crosswalk, as faixas;

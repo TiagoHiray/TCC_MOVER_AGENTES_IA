@@ -8,7 +8,7 @@ desejada mandada ao TM a cada tick (TrafficManager.set_desired_speed), por meio 
 O que este módulo faz:
 1. gera o mundo OpenDRIVE do campus a partir do .xodr (o mesmo mapa_final.xodr), com física;
 2. cria o caminhão configurado no início da rota do plano de missão e liga o piloto automático;
-3. passa ao TM o caminho da volta (pontos da rota a cada ~10 m, no sentido horário);
+3. passa ao TM o caminho da volta (pontos da rota a cada ~10 m, no sentido de tráfego do mapa);
 4. a cada tick: manda a velocidade desejada, avança o mundo (modo síncrono, 20 Hz) e lê a
    telemetria (posição, velocidade, aceleração, pedais), projetando a posição na rota para saber
    a distância percorrida;
