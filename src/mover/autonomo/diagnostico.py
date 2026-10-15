@@ -7,6 +7,7 @@ governador, quem limitava, o modo do tick, os pedais e quantas vezes a aceleraç
 (oscilação entre acelerar e frear).
 
 Uso, a partir da pasta src/:
+    python -m mover.autonomo.diagnostico                   # a telemetria com agentes mais recente
     python -m mover.autonomo.diagnostico ../data/benchmark/<data>/telemetria_com_agentes.csv
     python -m mover.autonomo.diagnostico ../data/autonomo/corridas/<id>/telemetria.csv --trechos 15
 """
@@ -22,6 +23,17 @@ if __package__ in (None, ""):  # execução direta
 
 import numpy as np
 import pandas as pd
+
+from mover.config import caminho, carregar_yaml
+
+
+def telemetria_mais_recente() -> Path | None:
+    """A telemetria com agentes mais recente: do benchmark ou de uma corrida (também as interrompidas)."""
+    cfg = carregar_yaml("config/autonomo.yaml") if caminho("config/autonomo.yaml").exists() else {}
+    pasta_bench = caminho((cfg.get("benchmark") or {}).get("pasta", "data/benchmark"))
+    pasta_corridas = caminho((cfg.get("corridas") or {}).get("pasta", "data/autonomo/corridas"))
+    candidatos = list(pasta_bench.glob("*/telemetria_com_agentes.csv")) + list(pasta_corridas.glob("*_agentes/telemetria.csv"))
+    return max(candidatos, key=lambda p: p.stat().st_mtime) if candidatos else None
 
 
 def resumo_por_trecho(tel: pd.DataFrame, passo_m: float = 10.0) -> pd.DataFrame:
@@ -46,15 +58,21 @@ def resumo_por_trecho(tel: pd.DataFrame, passo_m: float = 10.0) -> pd.DataFrame:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Onde o caminhão andou devagar e o que o governador pedia ali.")
-    parser.add_argument("telemetria", help="telemetria.csv da corrida ou telemetria_*_agentes.csv do benchmark")
+    parser.add_argument("telemetria", nargs="?", help="telemetria.csv de uma corrida ou telemetria_*_agentes.csv do benchmark "
+                                                     "(padrão: a com agentes mais recente)")
     parser.add_argument("--trechos", type=int, default=12, help="quantos trechos mais lentos mostrar")
     parser.add_argument("--passo", type=float, default=10.0, help="tamanho do trecho (m)")
     args = parser.parse_args(argv)
 
-    tel = pd.read_csv(args.telemetria)
+    arquivo = Path(args.telemetria) if args.telemetria else telemetria_mais_recente()
+    if arquivo is None or not arquivo.is_file():
+        raise SystemExit("Nenhuma telemetria com agentes encontrada. Rode uma volta antes (ela grava mesmo se for "
+                         "interrompida com Ctrl+C):\n    python -m mover.autonomo.dirigir --sem-painel --sem-render --sem-espera "
+                         "--provedor falso")
+    tel = pd.read_csv(arquivo)
     tabela = resumo_por_trecho(tel, args.passo)
     dt = float(np.median(np.diff(tel["sim_time"]))) if len(tel) > 1 else 0.05
-    print(f"{args.telemetria}: {len(tel)} linhas, {len(tel) * dt:.0f} s, {tel['d'].iloc[-1]:.0f} m, "
+    print(f"{arquivo}: {len(tel)} linhas, {len(tel) * dt:.0f} s, {tel['d'].iloc[-1]:.0f} m, "
           f"{tel['speed_kmh'].mean():.1f} km/h de média, modo {tel['modo'].iloc[0] if 'modo' in tel else '?'}")
     pd.set_option("display.width", 220)
     pd.set_option("display.max_columns", 20)

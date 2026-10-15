@@ -188,6 +188,19 @@ def test_governador_nao_deixa_o_caminhao_rastejando_com_um_piloto_que_ignora_ped
     assert gov.cfg.soltar_freio_s == 1.5
 
 
+def test_tm_do_carla_nunca_recebe_um_alvo_minusculo_quando_o_governador_quer_andar(m):
+    # o PID do TM do CARLA, com erro normalizado pelo alvo, oscila com alvos de 1-3 km/h (corrida 20261011_121132)
+    decisor = m.decisor(1, None)
+    op = OpcoesConducao(voltas=1, usar_llm=False, assincrona=False, sem_espera=True, v_min_comando_mps=5.0 / 3.6)
+    res = Conducao(m.plano, m.simulador_substituto(), m.governador("agentes", 1), decisor, op, m.caminhao, m.consumo).rodar()
+    decisor.encerrar()
+    assert res.completa
+    andando = [l for l in res.linhas if l["modo_tick"] != "parado" and (l["v_alvo_kmh"] or 0.0) > 5.0
+               and l["v_desejada_kmh"] > 0.05 * 3.6]  # pedir zero (frear) continua valendo
+    assert andando and min(l["v_desejada_kmh"] for l in andando) >= 5.0 - 1e-9
+    assert m.v_min_comando("carla") == pytest.approx(5.0 / 3.6) and m.v_min_comando("substituto") == 0.0
+
+
 def test_consumo_so_marcha_lenta_freando_e_metricas_contam_eventos():
     c, p = ParametrosCaminhao(), ParametrosConsumo()
     freando = taxa_combustivel_l_s(potencia_rodas_kw(np.array([8.0]), np.array([-3.0]), 0.0, c), p)[0]
