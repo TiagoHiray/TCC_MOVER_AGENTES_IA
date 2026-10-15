@@ -213,6 +213,7 @@ class Decisor:
         self.duracao_bloco = float(cfg.get("horizonte_s", 10.0))
         self.margem_m = float(cfg.get("margem_elementos_m", 20.0))
         self._executor = futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="llm-decisao")
+        self._em_andamento: futures.Future | None = None
         self.chamadas_llm = 0
 
     @property
@@ -457,9 +458,13 @@ class Decisor:
     def _perguntar_llm(self, decisao: Decisao) -> None:
         sistema = SISTEMA_DECISAO.format(max_palavras=self.max_palavras)
         usuario = self.prompt(decisao)
+        if self._em_andamento is not None and not self._em_andamento.done():
+            # a resposta atrasada de antes ainda ocupa o LLM: esperar atrás dela estouraria o prazo de novo (cascata)
+            decisao.motivo = "o LLM ainda respondia a uma decisão anterior; valeu a regra"
+            return
         self.chamadas_llm += 1
         try:
-            futuro = self._executor.submit(self.llm.gerar, sistema, usuario, RespostaDecisao)
+            futuro = self._em_andamento = self._executor.submit(self.llm.gerar, sistema, usuario, RespostaDecisao)
             resposta = futuro.result(timeout=self.prazo_s)
         except futures.TimeoutError:
             decisao.motivo = f"o LLM não respondeu em {num(self.prazo_s)} s; valeu a regra"

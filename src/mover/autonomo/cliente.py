@@ -9,6 +9,7 @@ curta (vale o quadro mais novo).
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import Any
 
@@ -19,6 +20,17 @@ log = logging.getLogger("mover.autonomo")
 
 class ErroServidor(RuntimeError):
     pass
+
+
+def json_seguro(valor: Any) -> Any:
+    """NaN e infinito viram null: o JSON não os aceita e o lote inteiro seria recusado."""
+    if isinstance(valor, float):
+        return valor if math.isfinite(valor) else None
+    if isinstance(valor, dict):
+        return {k: json_seguro(v) for k, v in valor.items()}
+    if isinstance(valor, (list, tuple)):
+        return [json_seguro(v) for v in valor]
+    return valor
 
 
 def servidor_no_ar(url: str, timeout_s: float = 1.0) -> bool:
@@ -115,10 +127,10 @@ class ClientePainel:
         tipo, dados = item
         try:
             if tipo == "telemetria":
-                resposta = self._http_envio.post("/sessao/telemetria", json={"linhas": dados})
+                resposta = self._http_envio.post("/sessao/telemetria", json={"linhas": json_seguro(dados)})
                 self.lotes_enviados += resposta.status_code < 400
             else:
-                resposta = self._http_envio.post("/sessao/decisoes", json=dados)
+                resposta = self._http_envio.post("/sessao/decisoes", json=json_seguro(dados))
                 self.decisoes_enviadas += resposta.status_code < 400
             if resposta.status_code >= 400:
                 raise ErroServidor(f"HTTP {resposta.status_code}: {resposta.text[:200]}")

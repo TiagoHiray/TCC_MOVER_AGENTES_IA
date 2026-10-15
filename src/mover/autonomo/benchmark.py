@@ -3,9 +3,10 @@
 Mede o efeito prático da camada agêntica na volta autônoma do campus:
 1. bateria "sem agentes": o caminhão segue o próprio plano sozinho (frenagens tardias e arrancadas
    em degrau perto das zonas);
-2. bateria "com agentes": a cada bloco, o caminhão manda aos agentes o plano dos próximos 10 s,
-   montado a partir do estado atual da corrida, e os agentes o alteram antes de ele ser executado
-   (a simulação espera cada decisão, então o resultado não depende da velocidade do computador).
+2. bateria "com agentes": a cada bloco, o caminhão manda aos agentes, por HTTP, o plano dos
+   próximos 10 s, montado a partir do estado atual da corrida, e os agentes o alteram antes de ele
+   ser executado (a simulação espera cada decisão, então o resultado não depende da velocidade do
+   computador). Sem --servidor, o servidor dos agentes sobe neste processo, numa porta livre.
 Cada bateria sai parada da largada e termina parada na chegada. Entre as duas, o caminhão volta à
 largada (no CARLA, um caminhão novo).
 
@@ -42,7 +43,8 @@ import numpy as np
 import pandas as pd
 
 from mover.agentes.llm import PROVEDORES
-from mover.autonomo.conducao import Conducao, OpcoesConducao, ResultadoConducao, metricas_da_corrida
+from mover.autonomo.canal_agentes import CanalAgentes, ErroAgentes
+from mover.autonomo.conducao import Conducao, FimDoSimulador, OpcoesConducao, ResultadoConducao, metricas_da_corrida
 from mover.autonomo.montagem import Montagem, montar
 from mover.config import caminho, carregar_yaml
 
@@ -173,16 +175,16 @@ def desenhar(pasta: Path, res_bruto: ResultadoConducao, res_agentes: ResultadoCo
     return destino
 
 
-def rodar_bateria(m: Montagem, sim: Any, modo: str, voltas: int, llm: Any, imprimir: Any,
-                  suavizador: Any = None) -> ResultadoConducao:
+def rodar_bateria(m: Montagem, sim: Any, modo: str, voltas: int, canal: CanalAgentes | None, imprimir: Any) -> ResultadoConducao:
     governador = m.governador(modo, voltas)
-    decisor = m.decisor(voltas, llm, suavizador) if modo == "agentes" else None
-    opcoes = OpcoesConducao(voltas=voltas, usar_llm=llm is not None, assincrona=False, sem_espera=True,
-                            duracao_bloco_s=m.duracao_bloco_s)
+    com_agentes = modo == "agentes" and canal is not None
+    opcoes = OpcoesConducao(voltas=voltas, assincrona=False, sem_espera=True, duracao_bloco_s=m.duracao_bloco_s,
+                            v_min_comando_mps=m.v_min_comando(getattr(sim, "nome", "")))
+    log.info("Bateria %s: %d volta(s), o mais rápido que o simulador aguenta (o log mostra cada volta).",
+             NOMES_MODO[modo], voltas)
     inicio = time.monotonic()
-    resultado = Conducao(m.plano, sim, governador, decisor, opcoes, m.caminhao, m.consumo, imprimir=imprimir).rodar()
-    if decisor is not None:
-        decisor.encerrar()
+    resultado = Conducao(m.plano, sim, governador, canal if com_agentes else None, opcoes, m.caminhao, m.consumo,
+                         imprimir=imprimir, planejador=m.planejador(voltas) if com_agentes else None).rodar()
     log.info("Bateria %s: %s em %.1f s de relógio (%d linhas, %d decisões).", NOMES_MODO[modo], resultado.motivo_fim,
              time.monotonic() - inicio, len(resultado.linhas), len(resultado.decisoes))
     return resultado
@@ -204,11 +206,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--modelo", help="modelo no provedor")
     parser.add_argument("--extrapolar", type=int, help="voltas da extrapolação (padrão: YAML, 100)")
     parser.add_argument("--saida", help="pasta de saída (padrão: data/benchmark/<data>)")
+    parser.add_argument("--servidor", help="URL de um servidor dos agentes já no ar (padrão: sobe um neste processo)")
     parser.add_argument("--silencioso", action="store_true", help="não imprime cada decisão")
     args = parser.parse_args(argv)
 
-    from mover.autonomo.dirigir import criar_llm_decisoes, preparar_simulador
-    from mover.servidor.rodar_servidor import configurar_logs
+    from mover.autonomo.dirigir import abrir_agentes, preparar_simulador
+    from mover.servidor.rodar_servidor import configurar_logs, iniciar_em_thread, parar_servidor, porta_do_servidor
 
     configurar_logs()
     cfg = carregar_yaml(args.config)
@@ -218,27 +221,41 @@ def main(argv: list[str] | None = None) -> int:
     m = montar(cfg, args.missao)
     voltas = int(args.voltas or cb.get("voltas", 3))
     alvo = int(args.extrapolar or cb.get("extrapolar_voltas", 100))
-    llm = None if args.sem_llm else criar_llm_decisoes(cfg_agentes, args.provedor, args.modelo,
-                                                       float(m.cfg_decisao.get("prazo_llm_s", 6.0)))
-    suavizador = None if args.sem_ml else m.suavizador()
     pasta = caminho(args.saida) if args.saida else caminho(cb.get("pasta", "data/benchmark")) / datetime.now().strftime("%Y%m%d_%H%M%S")
     pasta.mkdir(parents=True, exist_ok=True)
     imprimir = (lambda texto: None) if args.silencioso else (lambda texto: print(texto, flush=True))
     args_sim = argparse.Namespace(sem_carla=args.sem_carla, mapa=None, manter_mundo=args.manter_mundo,
                                   sem_render=not args.com_render, camera=None)
-    sim, _ = preparar_simulador(args_sim, m, cfg_sim, voltas)
-    codigo = 0
+    servidor = thread = canal = sim = None
     try:
+        url = args.servidor
+        if url is None:
+            from mover.servidor.app import criar_app
+
+            servidor, thread = iniciar_em_thread(criar_app(cfg_agentes, cfg_sim, cfg_autonomo=cfg, montagem=m), "127.0.0.1", 0)
+            url = f"http://127.0.0.1:{porta_do_servidor(servidor, 0)}"
+        canal, info_agentes = abrir_agentes(url, m, voltas, not args.sem_llm, not args.sem_ml, args.provedor, args.modelo)
+        sim, _ = preparar_simulador(args_sim, m, cfg_sim, voltas)
         sim.iniciar()
         log.info("Benchmark no %s: %d volta(s) por bateria; plano de %.0f m por volta.", sim.nome, voltas, m.plano.comprimento)
+        if sim.nome == "carla" and not args.com_render:
+            log.info("O CARLA não desenha a cena durante o benchmark (a janela fica preta); use --com-render para ver.")
         res_bruto = rodar_bateria(m, sim, "bruto", voltas, None, imprimir)
         sim.reiniciar()
-        res_agentes = rodar_bateria(m, sim, "agentes", voltas, llm, imprimir, suavizador)
+        res_agentes = rodar_bateria(m, sim, "agentes", voltas, canal, imprimir)
     except KeyboardInterrupt:
         log.warning("Benchmark interrompido (Ctrl+C).")
         return 130
+    except (ErroAgentes, FimDoSimulador) as erro:
+        log.error("%s", erro)
+        return 1
     finally:
-        sim.encerrar()
+        if sim is not None:
+            sim.encerrar()
+        if canal is not None:
+            canal.encerrar()
+        if servidor is not None:
+            parar_servidor(servidor, thread)
 
     preco, co2 = m.consumo.preco_r_l, m.consumo.co2_kg_l
     met_bruto = metricas_da_corrida(res_bruto, m.plano.comprimento, m.caminhao, m.consumo, m.limiares)
@@ -258,8 +275,10 @@ def main(argv: list[str] | None = None) -> int:
         "data": datetime.now().isoformat(timespec="seconds"), "simulador": sim.nome, "voltas": voltas,
         "combustivel": m.consumo.combustivel, "preco_r_l": preco, "co2_kg_l": co2,
         "modelo_consumo": "VT-CPFM (Willans + termo quadrático) sobre a velocidade e a aceleração medidas",
-        "llm_decisoes": llm.nome if llm else None,
-        "suavizador_ml": suavizador.nome if suavizador is not None else None,
+        "llm_decisoes": info_agentes.get("llm"),
+        "suavizador_ml": info_agentes.get("ml"),
+        "agentes_http": url,
+        "requisicoes_agentes": canal.requisicoes,
         "decisoes": len(res_agentes.decisoes),
         "decisoes_por_origem": {o: sum(d.get("texto_origem") == o for d in res_agentes.decisoes) for o in ("llm", "regra")},
         "opcoes": {o: sum(d.get("opcao") == o for d in res_agentes.decisoes)
@@ -283,8 +302,8 @@ def main(argv: list[str] | None = None) -> int:
     if not (res_bruto.completa and res_agentes.completa):
         log.error("Alguma bateria não chegou ao fim (%s / %s): confira antes de usar os números.",
                   res_bruto.motivo_fim, res_agentes.motivo_fim)
-        codigo = 2
-    return codigo
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

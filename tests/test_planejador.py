@@ -270,6 +270,8 @@ def test_dirigir_treina_o_ml_na_primeira_vez_e_grava_o_plano_de_cada_bloco(m, co
     decisoes = [json.loads(linha) for linha in (corrida / "decisoes.jsonl").read_text(encoding="utf-8").splitlines() if linha]
     assert decisoes and all(d["fonte"] == "plano" and d["plano"]["t"] and d["ml"]["modelo"] for d in decisoes)
     assert all(d["opcao"] != "nenhuma" for d in decisoes if d["brutas"])
+    # sem a página, os agentes rodaram num servidor só desta corrida, e o caminhão falou com eles por HTTP
+    assert resumo["agentes_http"].startswith("http://127.0.0.1:") and resumo["requisicoes_agentes"] > len(decisoes)
     tel = pd.read_csv(corrida / "telemetria.csv")
     assert tel["d"].iloc[-1] == pytest.approx(m.plano.comprimento, abs=15.0)
 

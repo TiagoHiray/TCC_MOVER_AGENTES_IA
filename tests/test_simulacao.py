@@ -263,6 +263,10 @@ def carla_falso() -> types.ModuleType:
         def apply_control(self, controle):
             self.controles.append(controle)
 
+        @property
+        def is_alive(self):
+            return not self.destruido
+
         def set_autopilot(self, ligado=True, porta=8000):
             chamadas.append(("autopiloto", ligado, porta))
             self.autopiloto = (ligado, porta)
@@ -536,7 +540,7 @@ def test_simulador_carla_liga_o_piloto_automatico_le_a_telemetria_e_restaura_o_s
     p0 = plano.rota.ponto(0.0)
     assert (x, y, yaw) == pytest.approx((p0.x, -p0.y, -math.degrees(p0.rumo)), abs=1e-6)  # y e yaw do CARLA invertidos
     n_pontos = next(c[1] for c in carla.chamadas if c[0] == "caminho")
-    assert n_pontos == math.ceil((plano.comprimento + 30.0 - 8.0) / 10.0)  # caminho da largada até a chegada
+    assert n_pontos == math.ceil((plano.comprimento + 30.0 - 8.0) / 10.0)  # a corrida inteira de uma vez
 
     linhas = [sim.passo(5.0) for _ in range(60)]  # 3 s pedindo 18 km/h
     assert tm.desejada[ator.id] == pytest.approx(18.0)
@@ -571,6 +575,208 @@ def test_corrida_completa_no_carla_falso_para_na_chegada(monkeypatch):
     assert res.completa and res.simulador == "carla"
     assert res.linhas[-1]["d"] == pytest.approx(plano.comprimento, abs=10.0) and res.linhas[-1]["speed_mps"] < 0.06
     assert min(l["speed_mps"] for l in res.linhas if abs(l["d"] - 200.0) < 6.0) < 0.05  # parou na portaria
+
+
+def test_caminhao_removido_pelo_carla_encerra_a_corrida_com_o_diagnostico(monkeypatch, caplog):
+    from mover.autonomo.conducao import Conducao, OpcoesConducao
+    from mover.autonomo.montagem import montar
+
+    carla, plano, sim = _simulador(monkeypatch)
+    world = carla.cliente.mundo
+    tick = world.tick
+
+    def tick_que_remove():  # o Traffic Manager tira o caminhão do mundo no meio da volta
+        frame = tick()
+        if world.ticks > 400:
+            world.ator.destruido = True
+        return frame
+
+    world.tick = tick_que_remove
+    m = montar(carregar_yaml("config/autonomo.yaml"), plano=plano)
+    with caplog.at_level(logging.ERROR, logger="mover.autonomo"):
+        res = Conducao(plano, sim, m.governador("bruto", 1), None, OpcoesConducao(voltas=1, sem_espera=True)).rodar()
+    sim.encerrar()
+    assert res.motivo_fim == "removido" and not res.completa and len(res.linhas) == 400 - 20  # 20 ticks assentando
+    assert "o CARLA removeu o caminhão" in caplog.text and f"d = {res.linhas[-1]['d']:.1f} m" in caplog.text
+
+
+def test_verificacao_da_topologia_acha_o_beco_sem_saida_antes_da_largada(monkeypatch):
+    from mover.autonomo.rota import para_carla
+
+    carla, plano, sim = _simulador(monkeypatch)
+    assert sim.topologia == {"verificada": False}  # o waypoint falso não tem next()
+
+    class WaypointNaRota:
+        road_id, lane_id, is_junction = 257, -1, False
+        fim_m = 150.0
+
+        def __init__(self, d):
+            p = plano.rota.ponto(d)
+            x, y, _ = para_carla(p.x, p.y, p.rumo)
+            self.d, self.transform = d, carla.Transform(carla.Location(x, y, 0.0))
+
+        def next(self, passo):
+            return [] if self.d + passo > self.fim_m else [WaypointNaRota(self.d + passo)]
+
+    sim.mapa = types.SimpleNamespace(get_waypoint=lambda loc, **kw: WaypointNaRota(0.0))
+    problemas = sim.verificar_topologia()["problemas"]
+    assert [(p["tipo"], p["via"], p["faixa"]) for p in problemas] == [("beco sem saída", 257, -1)]
+    assert problemas[0]["s_m"] == pytest.approx(150.0, abs=2.5)
+    WaypointNaRota.fim_m = math.inf
+    resultado = sim.verificar_topologia()
+    assert resultado["problemas"] == [] and resultado["percorrido_m"] >= plano.comprimento
+    sim.encerrar()
+
+
+def test_juncoes_de_passagem_com_conector_minusculo_viram_ligacao_direta_no_mapa_do_carla(tmp_path):
+    import xml.etree.ElementTree as ET
+
+    from mover.autonomo.rota_mapa import rota_do_mapa
+    from mover.autonomo.xodr_carla import colapsar_juncoes_de_passagem, preparar_para_carla
+    from mover.config import caminho
+
+    original = caminho("data/mapas/mapa_final.xodr").read_text(encoding="utf-8")
+    texto, feitas = colapsar_juncoes_de_passagem(original, 1.0)
+    por_conector = {f["conector"]: f for f in feitas}
+    assert por_conector["287"] == {"juncao": "11", "conector": "287", "conector_m": 0.112, "de": "257", "para": "258",
+                                   "sem_fresta": True}
+    assert all(f["conector_m"] < 1.0 for f in feitas) and "285" not in por_conector  # o conector de 11 m fica
+    raiz = ET.fromstring(texto)
+    estradas = {e.get("id"): e for e in raiz.findall("road")}
+    assert "287" not in estradas and "285" in estradas and raiz.find("junction[@id='11']") is None
+    assert estradas["257"].find("link/successor").attrib == {"elementType": "road", "elementId": "258", "contactPoint": "start"}
+    assert estradas["258"].find("link/predecessor").attrib == {"elementType": "road", "elementId": "257", "contactPoint": "end"}
+    assert estradas["257"].find(".//lane[@id='-1']/link/successor").get("id") == "-1"
+    assert estradas["258"].find(".//lane[@id='-1']/link/predecessor").get("id") == "-1"
+    assert float(estradas["257"].get("length")) == pytest.approx(106.9733078 + 0.11215534, abs=1e-6)
+    # o mapa ajustado continua lido igual: a mesma volta, do mesmo tamanho
+    texto, ajustes = preparar_para_carla(original, {"colapsar_conectores_m": 1.0, "acostamento_m": 2.0})
+    assert ajustes["acostamento_m"] == 2.0 and len(ajustes["juncoes_colapsadas"]) == len(feitas)
+    raiz = ET.fromstring(texto)
+    for secao in raiz.iter("laneSection"):  # acostamento dos dois lados; a faixa de direção não muda
+        faixas = {f.get("id"): f for f in secao.iter("lane")}
+        assert faixas["1"].get("type") == faixas["-2"].get("type") == "shoulder"
+        assert faixas["-1"].get("type") == "driving" and faixas["-2"].find("width").get("a") == "2.00"
+    assert [c.tag for c in raiz.find("road[@id='257']/lanes/laneSection")] == ["left", "center", "right"]
+    ajustado = tmp_path / "mapa_carla.xodr"
+    ajustado.write_text(texto, encoding="utf-8")
+    vias = carregar_yaml("config/autonomo.yaml")["gerar_missao"]["rota"]["vias"]
+    tipos = ("driving", "restricted", "bidirectional", "parking")
+    antes, _ = rota_do_mapa(ler_xodr(caminho("data/mapas/mapa_final.xodr"), 0.5, tipos), vias)
+    depois, _ = rota_do_mapa(ler_xodr(ajustado, 0.5, tipos), vias)
+    assert depois.comprimento == pytest.approx(antes.comprimento, abs=1.0)
+    assert colapsar_juncoes_de_passagem("<OpenDRIVE/>", 1.0) == ("<OpenDRIVE/>", [])
+    assert colapsar_juncoes_de_passagem(original, 0.0) == (original, [])
+    assert preparar_para_carla("<OpenDRIVE/>", {}) == ("<OpenDRIVE/>", {"juncoes_colapsadas": [], "acostamento_m": 0.0,
+                                                                        "secoes_com_acostamento": 0,
+                                                                        "georreferencia_removida": False})
+    so_geo, info = preparar_para_carla(original, {"colapsar_conectores_m": 0, "acostamento_m": 0})
+    assert info["georreferencia_removida"] and "<geoReference" not in so_geo and "<geoReference" in original
+    assert ET.fromstring(so_geo).find("header").get("name") == ET.fromstring(original).find("header").get("name")
+
+
+def test_caminhao_preso_no_carla_encerra_a_corrida_mesmo_com_o_governador_pedindo_pouco(monkeypatch, caplog):
+    from mover.autonomo.conducao import Conducao, OpcoesConducao
+    from mover.autonomo.montagem import montar
+
+    carla, plano, sim = _simulador(monkeypatch)
+    tm = carla.cliente.tm
+    mover = tm.mover
+
+    def mover_ate_encalhar(ator, dt):  # as rodas saem da malha: o TM acelera e o caminhão não sai do lugar
+        if ator.s_caminho > 60.0:
+            ator.v, ator.a = 0.0, 0.0
+            return
+        mover(ator, dt)
+
+    tm.mover = mover_ate_encalhar
+    m = montar(carregar_yaml("config/autonomo.yaml"), plano=plano)
+    decisor = m.decisor(1)
+    op = OpcoesConducao(voltas=1, usar_llm=False, assincrona=False, sem_espera=True, parado_max_s=5.0)
+    with caplog.at_level(logging.ERROR, logger="mover.autonomo"):
+        res = Conducao(plano, sim, m.governador("agentes", 1), decisor, op).rodar()
+    decisor.encerrar()
+    sim.encerrar()
+    assert res.motivo_fim == "preso" and res.linhas[-1]["t"] < 60.0
+    assert "parado com alvo de" in caplog.text and "d = 6" in caplog.text
+
+
+def test_caminhao_que_sai_da_rota_encerra_a_corrida_com_a_posicao(monkeypatch, caplog):
+    from mover.autonomo.conducao import Conducao, OpcoesConducao
+    from mover.autonomo.montagem import montar
+
+    carla, plano, sim = _simulador(monkeypatch)
+    tm = carla.cliente.tm
+    mover = tm.mover
+
+    def mover_e_desviar(ator, dt):  # o TM pega outra faixa: o caminhão anda, mas longe da rota
+        mover(ator, dt)
+        if ator.s_caminho > 60.0:
+            loc = ator.tf.location
+            ator.tf = carla.Transform(carla.Location(loc.x, loc.y + 8.0, loc.z), ator.tf.rotation)
+
+    tm.mover = mover_e_desviar
+    m = montar(carregar_yaml("config/autonomo.yaml"), plano=plano)
+    op = OpcoesConducao(voltas=1, sem_espera=True, max_desvio_m=5.0)
+    with caplog.at_level(logging.WARNING, logger="mover.autonomo"):
+        res = Conducao(plano, sim, m.governador("bruto", 1), None, op).rodar()
+    sim.encerrar()
+    assert res.motivo_fim == "fora_da_rota" and "m da rota em d = 6" in caplog.text
+    assert "O caminhão saiu da rota" in caplog.text
+
+
+def test_caminho_do_tm_nao_tem_pontos_dentro_das_juncoes(monkeypatch):
+    from mover.autonomo.rota import para_carla
+
+    carla, plano, sim = _simulador(monkeypatch)
+    p = plano.rota.ponto(100.0)
+    cx, cy, _ = para_carla(p.x, p.y, p.rumo)
+
+    class WaypointFalso:
+        def __init__(self, loc):  # uma junção de ~20 m em volta de d = 100 m
+            self.is_junction = math.hypot(loc.x - cx, loc.y - cy) < 10.0
+
+    sim.mapa = types.SimpleNamespace(get_waypoint=lambda loc, **kw: WaypointFalso(loc))
+    sim._definir_caminho(0.0)
+    caminho = carla.cliente.tm.caminho[1:]  # o 1º é a posição do caminhão
+    assert caminho and all(math.hypot(x - cx, y - cy) >= 10.0 for x, y in caminho)
+    assert len(caminho) == math.ceil((plano.comprimento + 30.0 - 8.0) / 10.0) - 2  # 98 e 108 m ficam de fora
+    sim.encerrar()
+
+
+def test_tick_sem_resposta_encerra_a_corrida_e_o_vigia_avisa_o_tick_travado(monkeypatch):
+    from mover.autonomo.carla_tm import VigiaTick
+    from mover.autonomo.conducao import Conducao, OpcoesConducao
+    from mover.autonomo.montagem import montar
+
+    carla, plano, sim = _simulador(monkeypatch)
+    world = carla.cliente.mundo
+    tick = world.tick
+
+    def tick_que_estoura():  # o cliente do CARLA desiste depois do timeout
+        if world.ticks > 100:
+            raise RuntimeError("time-out of 60000ms while waiting for the simulator")
+        return tick()
+
+    world.tick = tick_que_estoura
+    m = montar(carregar_yaml("config/autonomo.yaml"), plano=plano)
+    res = Conducao(plano, sim, m.governador("bruto", 1), None, OpcoesConducao(voltas=1, sem_espera=True)).rodar()
+    sim.encerrar()
+    assert res.motivo_fim == "sem_resposta" and len(res.linhas) == 101 - 20  # ticks 21 a 101; o 102º estoura
+
+    travados: list[float] = []
+    vigia = VigiaTick(0.2, travados.append)
+    vigia.comecar()
+    esperar(lambda: travados, prazo_s=3.0)
+    vigia.parar()
+    assert travados[0] > 0.2
+    calmo: list[float] = []
+    vigia = VigiaTick(0.2, calmo.append)
+    vigia.comecar()
+    vigia.terminar()
+    time.sleep(1.3)
+    vigia.parar()
+    assert calmo == []
 
 
 def test_camera_do_painel_presa_ao_caminhao_manda_jpeg_e_sai_antes_do_caminhao(monkeypatch):
@@ -612,6 +818,10 @@ def test_cliente_do_painel_manda_cena_telemetria_e_quadros(tmp_path):
         cliente.abrir_sessao({"modo": "bruto", "voltas": 1, "logs_medidos": False})
         cliente.enviar_telemetria([{"t": 0.05, "sim_time": 0.05, "x": 0.0, "y": 0.0, "d": 0.1, "speed_kmh": 1.0}])
         assert cliente.lotes_enviados == 1 and http.get("/saude").json()["sessao"]["modo"] == "bruto"
+        # NaN na telemetria (visto no CARLA) não pode derrubar o lote
+        cliente.enviar_telemetria([{"t": 0.1, "sim_time": 0.1, "x": 0.0, "y": 0.0, "d": 0.2, "speed_kmh": 1.0,
+                                    "acc_long": float("nan"), "v_alvo_kmh": float("inf")}])
+        assert cliente.lotes_enviados == 2
         cliente.postar_quadro(codificar_jpeg(bgra_azul(32, 16), 32, 16))
         assert http.get("/camera/info").json()["quadros"] == 1
         with pytest.raises(ErroServidor, match="HTTP 400"):
