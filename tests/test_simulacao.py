@@ -818,6 +818,10 @@ def test_cliente_do_painel_manda_cena_telemetria_e_quadros(tmp_path):
         cliente.abrir_sessao({"modo": "bruto", "voltas": 1, "logs_medidos": False})
         cliente.enviar_telemetria([{"t": 0.05, "sim_time": 0.05, "x": 0.0, "y": 0.0, "d": 0.1, "speed_kmh": 1.0}])
         assert cliente.lotes_enviados == 1 and http.get("/saude").json()["sessao"]["modo"] == "bruto"
+        # NaN na telemetria (visto no CARLA) não pode derrubar o lote
+        cliente.enviar_telemetria([{"t": 0.1, "sim_time": 0.1, "x": 0.0, "y": 0.0, "d": 0.2, "speed_kmh": 1.0,
+                                    "acc_long": float("nan"), "v_alvo_kmh": float("inf")}])
+        assert cliente.lotes_enviados == 2
         cliente.postar_quadro(codificar_jpeg(bgra_azul(32, 16), 32, 16))
         assert http.get("/camera/info").json()["quadros"] == 1
         with pytest.raises(ErroServidor, match="HTTP 400"):

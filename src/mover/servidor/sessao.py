@@ -265,7 +265,7 @@ class SessaoAutonoma:
                 linha["t"] = t
                 # aceleração mostrada suavizada (~0,3 s): a do CARLA vem com o ruído da física
                 dt = 1.0 / self.taxa_hz
-                self._a_suave += (float(linha.get("acc_long", 0.0)) - self._a_suave) * min(1.0, dt / 0.3)
+                self._a_suave += (float(linha.get("acc_long") or 0.0) - self._a_suave) * min(1.0, dt / 0.3)
                 linha["acc_long_suave"] = self._a_suave
                 self.linhas.append(linha)
                 if t >= self._t_serie + PASSO_SERIE_S - 1e-6:
