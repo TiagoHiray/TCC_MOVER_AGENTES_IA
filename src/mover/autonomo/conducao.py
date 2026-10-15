@@ -99,6 +99,9 @@ class OpcoesConducao:
     parado_max_s: float = 30.0       # parado esse tempo pedindo para andar: encerra (caminhão preso)
     max_desvio_m: float = 12.0       # mais longe que isso da rota por `fora_max_s`: encerra (saiu da rota)
     fora_max_s: float = 3.0
+    # piso da velocidade mandada ao piloto quando o governador quer andar (0 = sem piso). O PID do TM do CARLA usa o
+    # erro normalizado pelo alvo: com alvos de 1 a 3 km/h ele alterna acelerador e freio e o caminhão rasteja
+    v_min_comando_mps: float = 0.0
 
 
 @dataclass
@@ -288,6 +291,14 @@ class Conducao:
             self.ao_decisao(entrada)
 
     # ------------------------------------------------------------------ corrida
+    def _comando(self, v_des: float, ultimo: dict[str, Any]) -> float:
+        """Velocidade mandada ao piloto: a do governador, com o piso quando ele quer andar (fora de paradas)."""
+        piso = self.op.v_min_comando_mps
+        alvo = float(ultimo.get("v_alvo_kmh") or 0.0) / 3.6
+        if piso <= 0.0 or ultimo.get("parado") or v_des <= 0.05 or alvo <= piso:
+            return v_des
+        return max(v_des, piso)
+
     def rodar(self) -> ResultadoConducao:
         op, gov, sim = self.op, self.gov, self.sim
         res = ResultadoConducao(modo=gov.modo, simulador=getattr(sim, "nome", "?"), voltas=op.voltas)
@@ -312,6 +323,7 @@ class Conducao:
             while True:
                 self._recolher()
                 v_des = gov.velocidade_desejada(self.estado["d"], self.estado["v"], self.estado["a"], dt)
+                v_des = self._comando(v_des, gov.ultimo)
                 try:
                     linha = sim.passo(v_des)
                 except FimDoSimulador as erro:

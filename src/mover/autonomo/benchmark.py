@@ -178,7 +178,8 @@ def desenhar(pasta: Path, res_bruto: ResultadoConducao, res_agentes: ResultadoCo
 def rodar_bateria(m: Montagem, sim: Any, modo: str, voltas: int, canal: CanalAgentes | None, imprimir: Any) -> ResultadoConducao:
     governador = m.governador(modo, voltas)
     com_agentes = modo == "agentes" and canal is not None
-    opcoes = OpcoesConducao(voltas=voltas, assincrona=False, sem_espera=True, duracao_bloco_s=m.duracao_bloco_s)
+    opcoes = OpcoesConducao(voltas=voltas, assincrona=False, sem_espera=True, duracao_bloco_s=m.duracao_bloco_s,
+                            v_min_comando_mps=m.v_min_comando(getattr(sim, "nome", "")))
     log.info("Bateria %s: %d volta(s), o mais rápido que o simulador aguenta (o log mostra cada volta).",
              NOMES_MODO[modo], voltas)
     inicio = time.monotonic()

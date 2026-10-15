@@ -233,7 +233,8 @@ def main(argv: list[str] | None = None) -> int:
         # sem o relógio, a simulação correria na frente dos agentes: então ela espera cada decisão
         opcoes = OpcoesConducao(voltas=voltas, usar_llm=llm_nome is not None, assincrona=not args.sem_espera,
                                 fator_tempo=args.fator_tempo,
-                                sem_espera=args.sem_espera, duracao_bloco_s=m.duracao_bloco_s)
+                                sem_espera=args.sem_espera, duracao_bloco_s=m.duracao_bloco_s,
+                                v_min_comando_mps=m.v_min_comando(sim.nome))
         conducao = Conducao(m.plano, sim, governador, canal, opcoes, m.caminhao, m.consumo,
                             ao_lote=cliente.enviar_telemetria if cliente else None,
                             ao_decisao=cliente.enviar_decisao if cliente else None,

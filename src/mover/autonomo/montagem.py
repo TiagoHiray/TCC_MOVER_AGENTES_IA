@@ -47,6 +47,12 @@ class Montagem:
     def duracao_bloco_s(self) -> float:
         return float(self.cfg_decisao.get("horizonte_s", 10.0))
 
+    def v_min_comando(self, simulador: str) -> float:
+        """Piso (m/s) da velocidade mandada ao TM do CARLA quando o governador quer andar; 0 fora do CARLA."""
+        if simulador != "carla":
+            return 0.0
+        return float((self.cfg.get("carla") or {}).get("velocidade_minima_tm_kmh", 5.0)) / 3.6
+
     def governador(self, modo: str, voltas: int) -> Governador:
         return Governador(self.plano, self.cfg_governador, modo=modo, n_voltas=voltas, opcoes=self.opcoes)
 

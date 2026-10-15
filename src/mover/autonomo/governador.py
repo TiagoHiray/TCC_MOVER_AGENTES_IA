@@ -270,7 +270,7 @@ class Governador:
         if lim.parada and lim.v < 0.5:
             # fim de parada: a desaceleração some junto com a velocidade (sem tranco ao parar)
             a_desejada = max(a_desejada, -cfg.ganho_parada * self._v_ref)
-        self._lento_s = self._lento_s + dt if v < 0.5 else 0.0
+        self._lento_s = self._lento_s + dt if v < 1.0 else 0.0  # histerese: oscilar em torno de 0,5 m/s não zera
         if v < 0.5 and self._v_ref - v > 0.25 and a_desejada > 0.0 and self._lento_s < cfg.soltar_freio_s:
             # saindo da imobilidade: o freio ainda está soltando; não acumula pedido de aceleração. Depois disso a
             # referência volta a crescer: o piloto do CARLA quase não acelera um caminhão pedindo +1 km/h
