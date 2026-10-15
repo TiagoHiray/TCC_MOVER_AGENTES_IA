@@ -297,6 +297,10 @@ class Conducao:
         alvo = float(ultimo.get("v_alvo_kmh") or 0.0) / 3.6
         if piso <= 0.0 or ultimo.get("parado") or v_des <= 0.05 or alvo <= piso:
             return v_des
+        v = self.estado["v"]
+        if v < 2.0 * piso:
+            # arrancada: pedido sempre acima da velocidade atual, senão o TM passa do pedido e freia (corrida 20261014)
+            return max(v_des, min(alvo, v + piso))
         return max(v_des, piso)
 
     def rodar(self) -> ResultadoConducao:
