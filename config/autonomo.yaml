@@ -14,12 +14,16 @@ gerar_missao:
   # Nenhuma gravação de celular entra aqui: tudo sai do mapa do CARLA, do OSM do campus e desta seção.
   cruzeiro_kmh: 30                 # velocidade do piloto automático fora das zonas
   rota:
-    # Itinerário da volta: as vias do mapa_final.xodr, na ordem em que o caminhão passa por elas.
+    # Itinerário da volta: as vias do campus_maua.xodr, na ordem em que o caminhão passa por elas (anel de
+    # mão única: R01, R10+R07, R02, R11; ~784 m). Com R03 no lugar de R02 (3), a volta tem ~740 m.
     # Os conectores das junções são achados sozinhos. Ids das vias: python -m mover.autonomo.rota_mapa --figura vias.png
-    vias: [255, 250, 257, 258, 259, 260, 263, 252, 262, 272, 273, 274]
-    largada: [225.0, 162.0]        # ponto de largada no mapa (x, y do OpenDRIVE)
-  # Lombadas do campus: o OpenDRIVE não tem lombadas, então elas são pontos fixos do mapa (x, y),
-  # numerados na ordem da volta. Para mudar, edite a lista e rode o gerar_missao de novo.
+    vias: [1, 5, 2, 6]
+    largada: null                  # início da R01, logo depois da portaria
+    # mapa_final.xodr (anterior):
+    # vias: [255, 250, 257, 258, 259, 260, 263, 252, 262, 272, 273, 274]
+    # largada: [225.0, 162.0]
+  # Lombadas: o campus_maua.xodr as tem como objetos (speedBump) e o gerar_missao as lê do mapa. Esta lista
+  # só vale para mapas sem speedBump; os pontos abaixo são do mapa_final.xodr (outro sistema de coordenadas).
   lombadas:
     - [225.7, 125.5]
     - [191.4, 37.7]
@@ -29,6 +33,10 @@ gerar_missao:
     - [143.8, 248.5]
     - [224.4, 199.0]
   lombada: {v_max_kmh: 10, meia_largura_m: 8, distancia_max_m: 10}
+  # Portões: vêm do OSM do campus (barrier=gate); sem o OSM, valem estes pontos do mapa. O de baixo é o nó
+  # 6978527797 do OSM (o portao_1 do plano anterior), convertido para as coordenadas do campus_maua.xodr.
+  portoes:
+    - [366.0, 221.0]
   faixa: {v_max_kmh: 15, meia_largura_m: 6, distancia_max_m: 10}
   portao: {duracao_s: 4, distancia_max_m: 10}
   curva: {acel_lateral_max_mps2: 1.6, v_min_kmh: 10, folga_kmh: 2, antes_m: 5, juntar_m: 10}

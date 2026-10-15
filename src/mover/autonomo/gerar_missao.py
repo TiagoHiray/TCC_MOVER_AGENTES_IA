@@ -9,8 +9,9 @@ O que sai de cada fonte (nenhuma gravação de celular entra no plano):
   config/autonomo.yaml) diz por quais vias a volta passa; os conectores das junções são achados
   no grafo de faixas, e a rota segue o centro das faixas no sentido de tráfego (horário nesse mapa);
 - geometria da rota: zonas de curva, com o limite dado pela aceleração lateral máxima;
-- OSM do campus: faixas de pedestre (highway=crossing) e portões (barrier=gate) perto da rota;
-- config/autonomo.yaml: as lombadas, como pontos fixos do mapa (o OpenDRIVE não tem lombadas).
+- objetos do mapa (campus_maua.xodr): lombadas (speedBump) e faixas de pedestre (crosswalk);
+- OSM do campus: portões (barrier=gate) perto da rota e, se o mapa não tiver crosswalk, as faixas;
+- config/autonomo.yaml: lombadas como pontos fixos, só para mapas sem speedBump (o mapa_final.xodr).
 
 O arquivo gerado é editável à mão: zonas e paradas podem ser mudadas sem rodar isto de novo.
 """
@@ -22,6 +23,7 @@ import json
 import logging
 import math
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +33,7 @@ from mover.autonomo.missao import Parada, PlanoMissao, Zona
 from mover.autonomo.rota import Rota
 from mover.autonomo.rota_mapa import rota_do_mapa
 from mover.config import caminho, carregar_yaml
-from mover.simulacao.opendrive import ler_xodr
+from mover.simulacao.opendrive import ler_xodr, linha_de_referencia
 from mover.simulacao.projecao import criar_projecao
 
 log = logging.getLogger("mover.autonomo")
@@ -40,6 +42,7 @@ PADRAO = {
     "cruzeiro_kmh": 30.0,
     "rota": {"vias": [], "largada": None, "passo_m": 1.0, "suavizar_m": 4.0, "tolerancia_m": 1.0},
     "lombadas": [],
+    "portoes": [],
     "lombada": {"v_max_kmh": 10.0, "meia_largura_m": 8.0, "distancia_max_m": 10.0},
     "faixa": {"v_max_kmh": 15.0, "meia_largura_m": 6.0, "distancia_max_m": 10.0},
     "portao": {"duracao_s": 4.0, "distancia_max_m": 10.0},
@@ -63,22 +66,58 @@ def sentido_da_volta(rota: Rota) -> str:
 # ---------------------------------------------------------------------------------------------
 # Elementos do plano
 # ---------------------------------------------------------------------------------------------
-def zonas_de_lombada(rota: Rota, pontos: list[Any], cfg: dict[str, Any]) -> list[Zona]:
-    """Lombadas do config (x, y no mapa), numeradas na ordem em que a volta passa por elas."""
+def objetos_do_mapa(arquivo: Path, tipo: str) -> list[dict[str, Any]]:
+    """Objetos OpenDRIVE de um tipo (speedBump, crosswalk...) com a posição (x, y) no mapa."""
+    raiz = ET.parse(arquivo).getroot()
+    saida = []
+    for via in raiz.findall("road"):
+        objetos = [o for o in via.iter("object") if o.get("type") == tipo]
+        if not objetos:
+            continue
+        s_ref, x_ref, y_ref, rumo = linha_de_referencia(via.find("planView"))
+        for obj in objetos:
+            s, t = float(obj.get("s", 0.0)), float(obj.get("t", 0.0))
+            h = float(np.interp(s, s_ref, rumo))
+            x = float(np.interp(s, s_ref, x_ref)) - t * math.sin(h)
+            y = float(np.interp(s, s_ref, y_ref)) + t * math.cos(h)
+            saida.append({"x": x, "y": y, "nome": obj.get("name") or obj.get("id"), "via": via.get("id")})
+    return saida
+
+
+def zonas_de_lombada(rota: Rota, pontos: list[Any], cfg: dict[str, Any], origem: str = "config/autonomo.yaml") -> list[Zona]:
+    """Lombadas (x, y no mapa), numeradas na ordem em que a volta passa por elas."""
     projetadas = []
     for ponto in pontos:
         x, y = (float(ponto["x"]), float(ponto["y"])) if isinstance(ponto, dict) else (float(ponto[0]), float(ponto[1]))
         s, lateral = rota.projetar(x, y)
+        nome = ponto.get("nome") if isinstance(ponto, dict) else None
         if abs(lateral) > cfg["distancia_max_m"]:
-            log.warning("Lombada em (%.1f, %.1f) fica a %.1f m da rota: ignorada.", x, y, abs(lateral))
+            # objetos do mapa fora da volta são normais (outras vias); ponto do config fora da rota é erro de cadastro
+            (log.debug if nome else log.warning)("Lombada em (%.1f, %.1f) fica a %.1f m da rota: ignorada.", x, y, abs(lateral))
             continue
-        projetadas.append((s, x, y))
+        projetadas.append((s, x, y, nome))
     zonas = []
     meia = cfg["meia_largura_m"]
-    for k, (s, x, y) in enumerate(sorted(projetadas), start=1):
+    for k, (s, x, y, nome) in enumerate(sorted(projetadas), start=1):
+        descricao = f"objeto {nome} do mapa" if nome else f"lombada do campus cadastrada no {origem}"
         zonas.append(Zona(f"lombada_{k}", "lombada", round((s - meia) % rota.comprimento, 1),
                           round((s + meia) % rota.comprimento, 1), cfg["v_max_kmh"], f"lombada {k}",
-                          f"lombada do campus cadastrada no config/autonomo.yaml em ({x:.1f}, {y:.1f})"))
+                          f"{descricao} em ({x:.1f}, {y:.1f})"))
+    return zonas
+
+
+def zonas_de_faixa_do_mapa(rota: Rota, objetos: list[dict[str, Any]], cfg: dict[str, Any]) -> list[Zona]:
+    projetadas = []
+    for obj in objetos:
+        s, lateral = rota.projetar(obj["x"], obj["y"])
+        if abs(lateral) <= cfg["distancia_max_m"]:
+            projetadas.append((s, obj["nome"], abs(lateral)))
+    zonas = []
+    meia = cfg["meia_largura_m"]
+    for k, (s, nome, lateral) in enumerate(sorted(projetadas), start=1):
+        zonas.append(Zona(f"faixa_{k}", "faixa", round((s - meia) % rota.comprimento, 1),
+                          round((s + meia) % rota.comprimento, 1), cfg["v_max_kmh"], f"faixa de pedestre {k}",
+                          f"objeto {nome} do mapa, a {lateral:.1f} m da rota"))
     return zonas
 
 
@@ -204,19 +243,35 @@ def gerar(cfg_sim: dict[str, Any], cfg_missao: dict[str, Any], texto_osm: str = 
         f"Rota tirada só do mapa do CARLA ({Path(arquivo_mapa).name}): itinerário de {len(cr['vias'])} vias "
         f"e {len(conectores)} conectores de junção ({', '.join(map(str, conectores)) or 'nenhum'}), no centro das "
         f"faixas e no sentido de tráfego ({sentido}).",
-        "Nenhuma gravação de celular entra no plano: as lombadas são pontos fixos do config/autonomo.yaml, e as "
-        "faixas de pedestre e os portões vêm do OSM do campus.",
     ]
-    zonas = zonas_de_lombada(rota, cm["lombadas"], cm["lombada"])
+    lombadas_mapa = objetos_do_mapa(caminho(arquivo_mapa), "speedBump")
+    faixas_mapa = objetos_do_mapa(caminho(arquivo_mapa), "crosswalk")
+    if lombadas_mapa:
+        zonas = zonas_de_lombada(rota, lombadas_mapa, cm["lombada"])
+        observacoes.append(f"Lombadas e faixas de pedestre são objetos do mapa (speedBump: {len(lombadas_mapa)}, "
+                           f"crosswalk: {len(faixas_mapa)}; entram as que ficam na rota). Portões: OSM do campus ou config/autonomo.yaml.")
+    else:
+        zonas = zonas_de_lombada(rota, cm["lombadas"], cm["lombada"])
+        observacoes.append("Nenhuma gravação de celular entra no plano: as lombadas são pontos fixos do config/autonomo.yaml, "
+                           "e as faixas de pedestre e os portões vêm do OSM do campus.")
+    if faixas_mapa:
+        zonas += zonas_de_faixa_do_mapa(rota, faixas_mapa, cm["faixa"])
     paradas: list[Parada] = []
     if mapa.georeferencia and texto_osm:
-        faixas = nos_osm(texto_osm, "highway", "crossing")
         portoes = nos_osm(texto_osm, "barrier", "gate")
         vias = [(float(m.group(1)), float(m.group(2))) for m in re.finditer(r'lat="([-\d.]+)" lon="([-\d.]+)"', texto_osm)]
         para_mapa, erro = projetor_mapa(mapa.georeferencia, mapa.offset, mapa.pontos, vias[:400])
         observacoes.append(f"OSM projetado no mapa pela georreferência do .xodr (mediana {erro:.1f} m até a via mais próxima).")
-        zonas += zonas_de_faixa(rota, faixas, para_mapa, cm["faixa"])
+        if not faixas_mapa:
+            zonas += zonas_de_faixa(rota, nos_osm(texto_osm, "highway", "crossing"), para_mapa, cm["faixa"])
         paradas += paradas_de_portao(rota, portoes, para_mapa, cm["portao"])
+    if not paradas:
+        for x, y in cm["portoes"]:
+            s, lateral = rota.projetar(float(x), float(y))
+            if abs(lateral) <= cm["portao"]["distancia_max_m"]:
+                k = len(paradas) + 1
+                paradas.append(Parada(f"portao_{k}", round(s, 1), cm["portao"]["duracao_s"], f"portão {k}",
+                                      f"portão cadastrado no config/autonomo.yaml em ({x:.1f}, {y:.1f})"))
     zonas += zonas_de_curva(rota, float(cm["cruzeiro_kmh"]), cm["curva"])
     zonas.sort(key=lambda z: z.s_ini)
     paradas.sort(key=lambda p: p.s)
@@ -275,7 +330,7 @@ def main(argv: list[str] | None = None) -> None:
     cfg_auto = carregar_yaml(args.config_autonomo)
     texto_osm = caminho(args.osm).read_text(encoding="utf-8") if caminho(args.osm).exists() else ""
     if not texto_osm:
-        log.warning("OSM não encontrado (%s): o plano sai sem faixas de pedestre e sem portões.", args.osm)
+        log.warning("OSM não encontrado (%s): portões só os do config/autonomo.yaml (e faixas só as do mapa).", args.osm)
     plano = gerar(cfg_sim, cfg_auto.get("gerar_missao") or {}, texto_osm)
     saida = caminho(args.saida or cfg_auto["missao"]["arquivo"])
     cabecalho = ("# Plano de missão da volta autônoma (gerado por: python -m mover.autonomo.gerar_missao), só a partir\n"
