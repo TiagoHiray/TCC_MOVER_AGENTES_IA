@@ -34,6 +34,7 @@ import numpy as np
 
 from mover.autonomo.conducao import FimDoSimulador
 from mover.autonomo.rota import Rota, de_carla, para_carla
+from mover.config import caminho
 # from mover.autonomo.xodr_carla import preparar_para_carla  # preparos do mapa_final.xodr (desligados)
 from mover.simulacao.camera_painel import PADRAO_CAMERA_PAINEL, CameraPainel
 
@@ -91,6 +92,26 @@ def _encerrar_processo_travado(espera_s: float) -> None:
 
 def _escalar(a: Any, b: Any) -> float:
     return float(a.x * b.x + a.y * b.y + a.z * b.z)
+
+
+def carregar_mapa_instalado(client: Any, nome: str, pasta_xodr: Path | None = None) -> Any:
+    """Carrega um mapa instalado no CARLA (nome curto ou caminho /Game/...) e salva o .xodr dele em `pasta_xodr`."""
+    disponiveis = [str(m) for m in client.get_available_maps()]
+    alvo = next((m for m in disponiveis if m == nome or m.rsplit("/", 1)[-1] == nome), None)
+    if alvo is None:
+        nomes = ", ".join(sorted(m.rsplit("/", 1)[-1] for m in disponiveis))
+        raise SystemExit(f"O mapa '{nome}' não está instalado neste CARLA (mapas disponíveis: {nomes}). Instale o pacote do "
+                         "mapa (campus_maua_pkg, cozido para o CARLA 0.9.16) ou deixe carla.mapa_carla vazio em "
+                         "config/simulacao.yaml para gerar o mundo a partir do .xodr.")
+    log.info("Carregando o mapa %s do CARLA (pode levar alguns segundos)...", alvo)
+    world = client.load_world(alvo)
+    if pasta_xodr is not None:
+        texto = world.get_map().to_opendrive()
+        destino = Path(pasta_xodr) / f"{alvo.rsplit('/', 1)[-1]}_carla.xodr"
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(texto, encoding="utf-8")
+        log.info("OpenDRIVE do mapa do CARLA (%d vias) salvo em %s.", texto.count("<road "), destino)
+    return world
 
 
 class SimuladorCarla:
@@ -172,7 +193,10 @@ class SimuladorCarla:
         if self.client is None:
             self.conectar()
         carla = self.carla
-        if not self.manter_mundo:
+        if not self.manter_mundo and self.cc.get("mapa_carla"):
+            self.world = carregar_mapa_instalado(self.client, str(self.cc["mapa_carla"]),
+                                                 caminho(self.cc.get("pasta_xodr_carla") or "data/mapas"))
+        elif not self.manter_mundo:
             if not self.texto_xodr:
                 raise ValueError("sem o texto do .xodr para gerar o mundo")
             p = self.cc.get("opendrive", {})

@@ -45,6 +45,9 @@ carla:
   timeout_s: 60
   passo_s: 0.05                    # 20 Hz, igual ao fixed_delta_seconds do coleta_carla
   carregar_mapa: true              # gera o mundo OpenDRIVE a partir do .xodr (--manter-mundo desliga)
+  # Mapa já instalado no CARLA (pacote campus_maua_pkg, com prédios, calçadas e acostamento): carregado pelo
+  # nome, como é, e o .xodr dele é salvo em data/mapas/<nome>_carla.xodr. Vazio: gera o mundo do .xodr acima
+  mapa_carla: campus_maua
   opendrive:                       # mesmos parâmetros do carregar_xodr.py do Eduardo
     vertex_distance: 2.0
     max_road_length: 50.0
