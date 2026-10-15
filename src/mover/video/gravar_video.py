@@ -147,7 +147,11 @@ class CenaCarla:
         self.world = self.client.get_world()
 
     def carregar_mapa(self, texto_xodr: str | None) -> None:
-        if texto_xodr:
+        if texto_xodr and self.cc.get("mapa_carla"):
+            from mover.autonomo.carla_tm import carregar_mapa_instalado
+
+            self.world = carregar_mapa_instalado(self.client, str(self.cc["mapa_carla"]))
+        elif texto_xodr:
             p = self.cc.get("opendrive", {})
             parametros = self.carla.OpendriveGenerationParameters(
                 vertex_distance=float(p.get("vertex_distance", 2.0)), max_road_length=float(p.get("max_road_length", 50.0)),
