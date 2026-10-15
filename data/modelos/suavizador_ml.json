@@ -1,0 +1,51 @@
+{
+  "treinado_em": "2026-10-14T21:14:09-03:00",
+  "tipo": "RandomForestRegressor (3 saídas)",
+  "situacoes_sorteadas": 2000,
+  "amostras": 2000,
+  "features": [
+    "v_atual_kmh",
+    "v_alvo_kmh",
+    "cruzeiro_kmh",
+    "distancia_m",
+    "comprimento_m",
+    "duracao_s",
+    "parada",
+    "gap_seguinte_m",
+    "v_alvo_seguinte_kmh",
+    "desacel_plano_mps2",
+    "acel_plano_mps2"
+  ],
+  "alvos": [
+    "desacel_mps2",
+    "acel_mps2",
+    "teto_kmh"
+  ],
+  "n_arvores": 200,
+  "semente": 7,
+  "versao_sklearn": "1.7.2",
+  "r2_teste": {
+    "desacel_mps2": 0.45,
+    "acel_mps2": 0.877,
+    "teto_kmh": 0.984
+  },
+  "validacao": {
+    "situacoes": 150,
+    "sem_eventos_pct": 100.0,
+    "custo_acima_do_otimo_pct": 0.48
+  },
+  "importancia": {
+    "v_atual_kmh": 0.004,
+    "v_alvo_kmh": 0.012,
+    "cruzeiro_kmh": 0.148,
+    "distancia_m": 0.004,
+    "comprimento_m": 0.008,
+    "duracao_s": 0.0,
+    "parada": 0.0,
+    "gap_seguinte_m": 0.712,
+    "v_alvo_seguinte_kmh": 0.109,
+    "desacel_plano_mps2": 0.004,
+    "acel_plano_mps2": 0.0
+  },
+  "duracao_s": 83.0
+}
