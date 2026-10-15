@@ -291,16 +291,19 @@ class Conducao:
             self.ao_decisao(entrada)
 
     # ------------------------------------------------------------------ corrida
-    def _comando(self, v_des: float, ultimo: dict[str, Any]) -> float:
+    def _comando(self, v_des: float, gov: Governador) -> float:
         """Velocidade mandada ao piloto: a do governador, com o piso quando ele quer andar (fora de paradas)."""
         piso = self.op.v_min_comando_mps
+        ultimo = gov.ultimo
         alvo = float(ultimo.get("v_alvo_kmh") or 0.0) / 3.6
         if piso <= 0.0 or ultimo.get("parado") or v_des <= 0.05 or alvo <= piso:
             return v_des
-        v = self.estado["v"]
-        if v < 2.0 * piso:
+        if self.estado["v"] < piso:
             # arrancada: pedido sempre acima da velocidade atual, senão o TM passa do pedido e freia (corrida 20261014)
-            return max(v_des, min(alvo, v + piso))
+            comando = max(v_des, min(alvo, self.estado["v"] + piso))
+            if comando > v_des:
+                gov.acompanhar_comando(comando)
+            return comando
         return max(v_des, piso)
 
     def rodar(self) -> ResultadoConducao:
@@ -327,7 +330,7 @@ class Conducao:
             while True:
                 self._recolher()
                 v_des = gov.velocidade_desejada(self.estado["d"], self.estado["v"], self.estado["a"], dt)
-                v_des = self._comando(v_des, gov.ultimo)
+                v_des = self._comando(v_des, gov)
                 try:
                     linha = sim.passo(v_des)
                 except FimDoSimulador as erro:
