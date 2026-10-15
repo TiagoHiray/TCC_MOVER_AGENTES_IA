@@ -14,7 +14,7 @@ __pycache__/
 # Saídas de execução (cada corrida e cada benchmark geram os próprios arquivos)
 data/autonomo/corridas/
 data/autonomo/sessoes/
-data/benchmark/
+# data/benchmark/
 data/agentes/
 
 # Notas locais
