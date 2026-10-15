@@ -8,7 +8,7 @@ desejada mandada ao TM a cada tick (TrafficManager.set_desired_speed), por meio 
 O que este módulo faz:
 1. gera o mundo OpenDRIVE do campus a partir do .xodr (o mesmo mapa_final.xodr), com física;
 2. cria o caminhão configurado no início da rota do plano de missão e liga o piloto automático;
-3. passa ao TM o caminho da volta (pontos da rota a cada ~10 m, no sentido horário);
+3. passa ao TM o caminho da volta (pontos da rota a cada ~10 m, no sentido de tráfego do mapa);
 4. a cada tick: manda a velocidade desejada, avança o mundo (modo síncrono, 20 Hz) e lê a
    telemetria (posição, velocidade, aceleração, pedais), projetando a posição na rota para saber
    a distância percorrida;
@@ -30,9 +30,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
+import numpy as np
+
 from mover.autonomo.conducao import FimDoSimulador
 from mover.autonomo.rota import Rota, de_carla, para_carla
-from mover.autonomo.xodr_carla import preparar_para_carla
+from mover.config import caminho
+# from mover.autonomo.xodr_carla import preparar_para_carla  # preparos do mapa_final.xodr (desligados)
 from mover.simulacao.camera_painel import PADRAO_CAMERA_PAINEL, CameraPainel
 
 log = logging.getLogger("mover.autonomo")
@@ -91,6 +94,26 @@ def _escalar(a: Any, b: Any) -> float:
     return float(a.x * b.x + a.y * b.y + a.z * b.z)
 
 
+def carregar_mapa_instalado(client: Any, nome: str, pasta_xodr: Path | None = None) -> Any:
+    """Carrega um mapa instalado no CARLA (nome curto ou caminho /Game/...) e salva o .xodr dele em `pasta_xodr`."""
+    disponiveis = [str(m) for m in client.get_available_maps()]
+    alvo = next((m for m in disponiveis if m == nome or m.rsplit("/", 1)[-1] == nome), None)
+    if alvo is None:
+        nomes = ", ".join(sorted(m.rsplit("/", 1)[-1] for m in disponiveis))
+        raise SystemExit(f"O mapa '{nome}' não está instalado neste CARLA (mapas disponíveis: {nomes}). Instale o pacote do "
+                         "mapa (campus_maua_pkg, cozido para o CARLA 0.9.16) ou deixe carla.mapa_carla vazio em "
+                         "config/simulacao.yaml para gerar o mundo a partir do .xodr.")
+    log.info("Carregando o mapa %s do CARLA (pode levar alguns segundos)...", alvo)
+    world = client.load_world(alvo)
+    if pasta_xodr is not None:
+        texto = world.get_map().to_opendrive()
+        destino = Path(pasta_xodr) / f"{alvo.rsplit('/', 1)[-1]}_carla.xodr"
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(texto, encoding="utf-8")
+        log.info("OpenDRIVE do mapa do CARLA (%d vias) salvo em %s.", texto.count("<road "), destino)
+    return world
+
+
 class SimuladorCarla:
     """Mesma interface do SimuladorSubstituto: iniciar, reiniciar, passo(v_desejada) e encerrar."""
 
@@ -130,6 +153,7 @@ class SimuladorCarla:
         self._ultima: dict[str, Any] = {}
         self.topologia: dict[str, Any] | None = None
         self.ajustes_mapa: dict[str, Any] = {}
+        self._alturas: Any = None
         self.fisica: dict[str, Any] = {}
         self._vigia: VigiaTick | None = None
         self._horizonte_caminho = 0.0
@@ -169,7 +193,10 @@ class SimuladorCarla:
         if self.client is None:
             self.conectar()
         carla = self.carla
-        if not self.manter_mundo:
+        if not self.manter_mundo and self.cc.get("mapa_carla"):
+            self.world = carregar_mapa_instalado(self.client, str(self.cc["mapa_carla"]),
+                                                 caminho(self.cc.get("pasta_xodr_carla") or "data/mapas"))
+        elif not self.manter_mundo:
             if not self.texto_xodr:
                 raise ValueError("sem o texto do .xodr para gerar o mundo")
             p = self.cc.get("opendrive", {})
@@ -183,11 +210,14 @@ class SimuladorCarla:
                 enable_pedestrian_navigation=bool(p.get("enable_pedestrian_navigation", True)),
             )
             log.info("Gerando o mundo OpenDRIVE no CARLA (pode levar alguns segundos)...")
-            texto, self.ajustes_mapa = preparar_para_carla(self.texto_xodr, p)
-            juncoes = self.ajustes_mapa["juncoes_colapsadas"]
-            log.info("Mapa para o CARLA: acostamento de %.1f m dos dois lados das vias; %d junção(ões) de passagem "
-                     "viraram ligação direta%s.", self.ajustes_mapa["acostamento_m"], len(juncoes),
-                     f" (conectores {', '.join(a['conector'] for a in juncoes)})" if juncoes else "")
+            texto = self.texto_xodr  # o mapa vai ao CARLA como é
+            # Preparos do mapa_final.xodr (acostamentos, junções de passagem colapsadas, geoReference ilegível),
+            # desligados com o campus_maua.xodr. Para religar, descomente (e as chaves em config/simulacao.yaml):
+            # texto, self.ajustes_mapa = preparar_para_carla(self.texto_xodr, p)
+            # juncoes = self.ajustes_mapa["juncoes_colapsadas"]
+            # log.info("Mapa para o CARLA: acostamento de %.1f m dos dois lados das vias; %d junção(ões) de passagem "
+            #          "viraram ligação direta%s.", self.ajustes_mapa["acostamento_m"], len(juncoes),
+            #          f" (conectores {', '.join(a['conector'] for a in juncoes)})" if juncoes else "")
             self.world = self.client.generate_opendrive_world(texto, parametros)
         self._config_original = self.world.get_settings()
         config = self.world.get_settings()
@@ -196,6 +226,7 @@ class SimuladorCarla:
         config.no_rendering_mode = bool(self.sem_render)
         self.world.apply_settings(config)
         self.mapa = self.world.get_map()
+        self._alturas = None
         self.tm = self.client.get_trafficmanager(int(self.ctm["porta_tm"]))
         self.tm.set_synchronous_mode(True)
         self.tm.set_random_device_seed(int(self.ctm["semente"]))
@@ -260,11 +291,28 @@ class SimuladorCarla:
                 "y_carla": round(float(loc.y), 1)}
 
     # ------------------------------------------------------------------ caminhão
+    def _z(self, x_carla: float, y_carla: float) -> float:
+        """Altura da via mais próxima em planta. Com elevação (campus_maua.xodr: ~750 m), um ponto em z = 0
+        casaria em 3D com a via mais baixa, não com a mais próxima."""
+        if self._alturas is None:
+            try:
+                from scipy.spatial import cKDTree
+
+                wps = self.mapa.generate_waypoints(2.0)
+                xyz = np.array([(w.transform.location.x, w.transform.location.y, w.transform.location.z) for w in wps], float)
+                self._alturas = (cKDTree(xyz[:, :2]), xyz[:, 2]) if len(xyz) else False
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                self._alturas = False
+        if not self._alturas:
+            return 0.0
+        arvore, z = self._alturas
+        return float(z[arvore.query((x_carla, y_carla))[1]])
+
     def _transform_largada(self) -> Any:
         carla = self.carla
         p = self.rota.ponto(0.0)
         x, y, yaw = para_carla(p.x, p.y, p.rumo)
-        wp = self.mapa.get_waypoint(carla.Location(x=x, y=y, z=0.0), project_to_road=True,
+        wp = self.mapa.get_waypoint(carla.Location(x=x, y=y, z=self._z(x, y)), project_to_road=True,
                                     lane_type=carla.LaneType.Any)
         z = float(wp.transform.location.z) if wp is not None else 0.0
         return carla.Transform(carla.Location(x=x, y=y, z=z), carla.Rotation(yaw=yaw))
@@ -353,7 +401,7 @@ class SimuladorCarla:
         while dist < fim:
             p = self.rota.ponto(dist)
             x, y, _ = para_carla(p.x, p.y, p.rumo)
-            local = carla.Location(x=x, y=y, z=0.0)
+            local = carla.Location(x=x, y=y, z=self._z(x, y))
             if not self._dentro_de_juncao(local):
                 pontos.append(local)
             dist += passo

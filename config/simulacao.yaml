@@ -6,9 +6,10 @@
 # =============================================================================
 
 mapa:
-  # Mapa do campus feito pelo Eduardo (pasta mapa_imt_plano_carla do Drive), usado sem alterações.
+  # Mapa do campus (campus_maua.xodr: anel de mão única, acostamentos, calçadas, elevação, lombadas e
+  # faixas de pedestre como objetos), usado sem alterações. O anterior era o data/mapas/mapa_final.xodr.
   # Outro mapa: python -m mover.autonomo.dirigir --mapa caminho/do/mapa.xodr
-  arquivo: data/mapas/mapa_final.xodr
+  arquivo: data/mapas/campus_maua.xodr
   passo_m: 0.5                     # amostragem dos centros de faixa usada no alinhamento
   tipos_faixa: [driving, restricted, bidirectional, parking]
 
@@ -44,6 +45,9 @@ carla:
   timeout_s: 60
   passo_s: 0.05                    # 20 Hz, igual ao fixed_delta_seconds do coleta_carla
   carregar_mapa: true              # gera o mundo OpenDRIVE a partir do .xodr (--manter-mundo desliga)
+  # Mapa já instalado no CARLA (pacote campus_maua_pkg, com prédios, calçadas e acostamento): carregado pelo
+  # nome, como é, e o .xodr dele é salvo em data/mapas/<nome>_carla.xodr. Vazio: gera o mundo do .xodr acima
+  mapa_carla: ""
   opendrive:                       # mesmos parâmetros do carregar_xodr.py do Eduardo
     vertex_distance: 2.0
     max_road_length: 50.0
@@ -52,12 +56,11 @@ carla:
     smooth_junctions: true
     enable_mesh_visibility: true
     enable_pedestrian_navigation: true
-    # junções de passagem (uma via -> conector -> outra via) com conector menor que isto viram ligação
-    # direta no mapa mandado ao CARLA. 0 desliga
-    colapsar_conectores_m: 1.0
-    # as vias têm uma faixa só, de 3,2 m: sem chão ao lado, o caminhão que corta a curva fica preso.
-    # Acostamento (faixa que o Traffic Manager não usa) de cada lado, só no mapa do CARLA. 0 desliga
-    acostamento_m: 2.0
+    # Preparos do mapa_final.xodr (desligados: o campus_maua.xodr vai ao CARLA como é; ver xodr_carla.py):
+    # junções de passagem com conector menor que isto viravam ligação direta
+    # colapsar_conectores_m: 1.0
+    # as vias tinham uma faixa só, de 3,2 m, sem chão ao lado: acostamento de cada lado
+    # acostamento_m: 2.0
 
 veiculo:
   blueprint: vehicle.carlamotors.european_hgv

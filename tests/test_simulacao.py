@@ -478,6 +478,14 @@ def carla_falso() -> types.ModuleType:
             self.mundo = Mundo()
             return self.mundo
 
+        def get_available_maps(self):
+            return ["/Game/Carla/Maps/Town10HD_Opt", "/Game/campus_maua_pkg/Maps/campus_maua/campus_maua"]
+
+        def load_world(self, nome):
+            chamadas.append(("carregar", nome))
+            self.mundo = Mundo()
+            return self.mundo
+
         def get_trafficmanager(self, porta=8000):
             self.tm = TrafficManager(porta)
             return self.tm
@@ -513,17 +521,29 @@ class ImagemFalsa:
         self.width, self.height, self.raw_data = largura, altura, bgra_azul(largura, altura)
 
 
-def _simulador(monkeypatch, voltas: int = 1, enviar=None):
+def _simulador(monkeypatch, voltas: int = 1, enviar=None, mapa_carla: str = "", pasta_xodr=None):
     from mover.autonomo.carla_tm import SimuladorCarla
 
     carla = carla_falso()
     monkeypatch.setitem(sys.modules, "carla", carla)
     plano = plano_estadio()
-    sim = SimuladorCarla(plano.rota, carregar_yaml("config/simulacao.yaml"), None, 0.05, "<OpenDRIVE/>", voltas=voltas)
+    cfg = carregar_yaml("config/simulacao.yaml")
+    cfg["carla"] = {**cfg["carla"], "mapa_carla": mapa_carla, "pasta_xodr_carla": str(pasta_xodr or "")}
+    sim = SimuladorCarla(plano.rota, cfg, None, 0.05, "<OpenDRIVE/>", voltas=voltas)
     if enviar is not None:
         sim.ligar_camera_painel(enviar)
     sim.iniciar()
     return carla, plano, sim
+
+
+def test_simulador_carla_carrega_o_mapa_instalado_como_ele_e_e_salva_o_xodr(monkeypatch, tmp_path):
+    carla, _, sim = _simulador(monkeypatch, mapa_carla="campus_maua", pasta_xodr=tmp_path)
+    assert ("carregar", "/Game/campus_maua_pkg/Maps/campus_maua/campus_maua") in carla.chamadas
+    assert not [c for c in carla.chamadas if c[0] == "gerar"]  # nada de gerar do .xodr nem de preparar o mapa
+    assert (tmp_path / "campus_maua_carla.xodr").read_text(encoding="utf-8") == "<OpenDRIVE/>"
+    sim.encerrar()
+    with pytest.raises(SystemExit, match="não está instalado.*Town10HD_Opt"):
+        _simulador(monkeypatch, mapa_carla="outro_mapa", pasta_xodr=tmp_path)
 
 
 def test_simulador_carla_liga_o_piloto_automatico_le_a_telemetria_e_restaura_o_simulador(monkeypatch, tmp_path):
@@ -660,7 +680,7 @@ def test_juncoes_de_passagem_com_conector_minusculo_viram_ligacao_direta_no_mapa
     assert [c.tag for c in raiz.find("road[@id='257']/lanes/laneSection")] == ["left", "center", "right"]
     ajustado = tmp_path / "mapa_carla.xodr"
     ajustado.write_text(texto, encoding="utf-8")
-    vias = carregar_yaml("config/autonomo.yaml")["gerar_missao"]["rota"]["vias"]
+    vias = [255, 250, 257, 258, 259, 260, 263, 252, 262, 272, 273, 274]  # itinerário da volta no mapa_final.xodr
     tipos = ("driving", "restricted", "bidirectional", "parking")
     antes, _ = rota_do_mapa(ler_xodr(caminho("data/mapas/mapa_final.xodr"), 0.5, tipos), vias)
     depois, _ = rota_do_mapa(ler_xodr(ajustado, 0.5, tipos), vias)
