@@ -24,6 +24,7 @@ if __package__ in (None, ""):  # execução direta
 import numpy as np
 import pandas as pd
 
+from mover.autonomo.consumo import Limiares, eventos_jerk, jerk, suavizar
 from mover.config import caminho, carregar_yaml
 
 
@@ -56,6 +57,41 @@ def resumo_por_trecho(tel: pd.DataFrame, passo_m: float = 10.0) -> pd.DataFrame:
     return tabela.round(2)
 
 
+def eventos_da_corrida(tel: pd.DataFrame, limiares: Limiares, comprimento_m: float, janela_s: float = 1.0) -> pd.DataFrame:
+    """Os eventos bruscos (mesma conta do benchmark) com o contexto de cada um.
+
+    `dz_m` e `dpitch_graus` (maior variação na janela) apontam degraus do mapa; `troca_marcha`, o câmbio.
+    """
+    t = tel["sim_time"].to_numpy(float)
+    if len(t) < 3:
+        return pd.DataFrame()
+    dt = float(np.median(np.diff(t)))
+    a_suave = suavizar(tel["acc_long"].to_numpy(float), dt, limiares.fc_hz)
+    linhas = []
+    for ev in eventos_jerk(t, jerk(a_suave, dt), limiares):
+        k = int(np.searchsorted(t, ev["t_pico"]))
+        perto = (t >= ev["t_pico"] - janela_s) & (t <= ev["t_pico"] + janela_s)
+        trecho = tel[perto]
+        d = float(tel["d"].iloc[k])
+        volta = int(tel["volta"].iloc[k]) + 1 if "volta" in tel else int(d // comprimento_m) + 1
+        s = float(tel["s"].iloc[k]) if "s" in tel else d % comprimento_m
+        linha = {"t_s": round(ev["t_pico"], 2), "volta": volta, "s_m": round(s, 1),
+                 "nivel": ev["nivel"], "jerk_mps3": round(ev["jerk_mps3"], 1), "acel_mps2": round(float(a_suave[k]), 2),
+                 "v_kmh": round(float(tel["speed_kmh"].iloc[k]), 1),
+                 "acelerador": round(float(trecho["throttle"].max()), 2), "freio": round(float(trecho["brake"].max()), 2)}
+        if "gear" in tel:
+            linha["troca_marcha"] = int(trecho["gear"].nunique() > 1)
+        if "z" in tel:
+            linha["dz_m"] = round(float(np.abs(np.diff(trecho["z"].to_numpy(float))).max(initial=0.0)), 3)
+        if "pitch_carla" in tel:
+            linha["dpitch_graus"] = round(float(trecho["pitch_carla"].max() - trecho["pitch_carla"].min()), 2)
+        for nome in ("limitado_por", "modo_tick"):
+            if nome in tel:
+                linha[nome] = tel[nome].iloc[k]
+        linhas.append(linha)
+    return pd.DataFrame(linhas)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Onde o caminhão andou devagar e o que o governador pedia ali.")
     parser.add_argument("telemetria", nargs="?", help="telemetria.csv de uma corrida ou telemetria_*_agentes.csv do benchmark "
@@ -78,6 +114,16 @@ def main(argv: list[str] | None = None) -> int:
     pd.set_option("display.max_columns", 20)
     print(f"\nOs {args.trechos} trechos de {args.passo:.0f} m em que o caminhão passou mais tempo:")
     print(tabela.sort_values("tempo_s", ascending=False).head(args.trechos).sort_index().to_string())
+
+    cfg = carregar_yaml("config/autonomo.yaml") if caminho("config/autonomo.yaml").exists() else {}
+    lim = cfg.get("limiares") or {}
+    limiares = Limiares(float(lim.get("atencao_mps3", 2.5)), float(lim.get("critico_mps3", 5.0)),
+                        float(lim.get("agrupar_s", 1.0)), float(lim.get("fc_hz", 1.5)))
+    comprimento = float(tel["d"].iloc[-1] / max(1, int(tel["volta"].max()) + 1)) if "volta" in tel else float(tel["d"].iloc[-1])
+    eventos = eventos_da_corrida(tel, limiares, comprimento)
+    print(f"\nEventos bruscos (|jerk| >= {limiares.atencao_mps3} m/s³; crítico >= {limiares.critico_mps3}): {len(eventos)}")
+    if len(eventos):
+        print(eventos.to_string(index=False))
     return 0
 
 
