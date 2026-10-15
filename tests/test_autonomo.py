@@ -283,6 +283,20 @@ def test_supervisor_llm_escolhe_dentro_das_opcoes_seguras_com_guarda_de_numeros(
     dec, _ = _decisao_com_llm(m, [{"opcao": regra.recomendada, "texto": "atrasado"}], atraso_s=0.5, prazo_s=0.1)
     assert dec.origem == "regra" and "não respondeu" in dec.motivo
 
+    # resposta atrasada ainda ocupando o LLM: a decisão seguinte não entra na fila atrás dela (cascata no CARLA)
+    cfg = dict(m.cfg_decisao, prazo_llm_s=0.1)
+    llm = LLMRoteiro([{"opcao": regra.recomendada, "texto": "atrasado"}] * 3, atraso_s=1.5)
+    decisor = Decisor(m.plano, m.modelo(), cfg, llm=llm, opcoes=m.opcoes, n_voltas=1)
+    gov = m.governador("agentes", 1)
+    plano = decisor.planejador().planejar(gov, PARADO, 0, janela_inicial(0.0, 10.0))
+    motivos = [decisor.decidir(plano, gov).motivo]
+    motivos.append(decisor.decidir(plano, gov).motivo)
+    time.sleep(1.6)
+    motivos.append(decisor.decidir(plano, gov).motivo)
+    decisor.encerrar()
+    assert "não respondeu" in motivos[0] and "ainda respondia" in motivos[1] and "não respondeu" in motivos[2]
+    assert len(llm.prompts) == 2
+
 
 # ---------------------------------------------------------------------------------------------
 # Laço de condução (simulador substituto)
