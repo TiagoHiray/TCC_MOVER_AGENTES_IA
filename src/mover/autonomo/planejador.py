@@ -17,7 +17,7 @@ pode alterar levemente o plano, e o caminhão executa o plano alterado (Y).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable
 
 import numpy as np
@@ -62,6 +62,30 @@ class PlanoFuturo:
             "manobras": list(self.manobras),
             "fonte_manobras": self.fonte_manobras,
         }
+
+    def para_json(self) -> dict[str, Any]:
+        """O plano completo, como o caminhão o manda aos agentes por HTTP (POST /agentes/plano)."""
+        return {
+            "bloco": int(self.bloco),
+            "janela": [float(self.janela[0]), float(self.janela[1])],
+            "estado": {k: float(v) for k, v in self.estado.items()},
+            "pendentes": [asdict(i) for i in self.pendentes],
+            "d_fim": float(self.d_fim),
+            "trajetoria": self.trajetoria.para_dict(),
+            "projecao": self.projecao.para_dict(),
+            "decisoes_bruscas": list(self.decisoes_bruscas),
+            "manobras": list(self.manobras),
+            "fonte_manobras": self.fonte_manobras,
+        }
+
+    @classmethod
+    def de_json(cls, dados: dict[str, Any]) -> "PlanoFuturo":
+        return cls(bloco=int(dados["bloco"]), janela=(float(dados["janela"][0]), float(dados["janela"][1])),
+                   estado={k: float(v) for k, v in dados["estado"].items()},
+                   pendentes=[Instancia(**i) for i in dados["pendentes"]], d_fim=float(dados["d_fim"]),
+                   trajetoria=Trajetoria.de_dict(dados["trajetoria"]), projecao=Trajetoria.de_dict(dados["projecao"]),
+                   decisoes_bruscas=list(dados.get("decisoes_bruscas") or []), manobras=list(dados.get("manobras") or []),
+                   fonte_manobras=str(dados.get("fonte_manobras", "rota")))
 
 
 # ---------------------------------------------------------------------- simulação do plano

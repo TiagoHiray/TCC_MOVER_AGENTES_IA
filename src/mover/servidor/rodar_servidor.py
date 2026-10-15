@@ -46,10 +46,19 @@ def carregar_configs(config_simulacao: str = "config/simulacao.yaml",
     return carregar_yaml(config_agentes), cfg_sim
 
 
+def porta_do_servidor(servidor: Any, padrao: int) -> int:
+    """Porta em que o uvicorn escuta (com porta 0, o sistema escolhe uma livre)."""
+    try:
+        return int(servidor.servers[0].sockets[0].getsockname()[1])
+    except (AttributeError, IndexError, OSError):
+        return padrao
+
+
 def iniciar_em_thread(app: Any, host: str, porta: int, timeout_s: float = 30.0):
     """Roda o uvicorn numa thread daemon (usado pelo piloto, que sobe o servidor no mesmo processo).
 
-    Devolve (servidor, thread). Para parar: parar_servidor(servidor, thread).
+    Devolve (servidor, thread). Para parar: parar_servidor(servidor, thread). Com porta 0, a porta
+    escolhida sai de porta_do_servidor(servidor, 0).
     """
     import uvicorn
 
@@ -68,7 +77,8 @@ def iniciar_em_thread(app: Any, host: str, porta: int, timeout_s: float = 30.0):
             servidor.should_exit = True
             raise TimeoutError(f"o servidor não respondeu em {timeout_s:.0f} s")
         time.sleep(0.05)
-    log.info("Servidor do painel em http://%s:%d (página em http://%s:%d/, log ao vivo em ws://%s:%d/ws)",
+    porta = porta_do_servidor(servidor, porta)
+    log.info("Servidor do painel e dos agentes em http://%s:%d (página em http://%s:%d/, log ao vivo em ws://%s:%d/ws)",
              host, porta, host, porta, host, porta)
     return servidor, thread
 

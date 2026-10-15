@@ -23,11 +23,16 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
+from mover.autonomo.conducao import FimDoSimulador
 from mover.autonomo.rota import Rota, de_carla, para_carla
+from mover.autonomo.xodr_carla import preparar_para_carla
 from mover.simulacao.camera_painel import PADRAO_CAMERA_PAINEL, CameraPainel
 
 log = logging.getLogger("mover.autonomo")
@@ -37,12 +42,49 @@ PADRAO_TM: dict[str, Any] = {
     "semente": 7,
     "passo_caminho_m": 10.0,     # distância entre os pontos do caminho passado ao TM
     "inicio_caminho_m": 8.0,     # o caminho começa um pouco à frente do caminhão
-    "max_pontos_caminho": 600,   # acima disso o caminho é renovado a cada volta
+    "horizonte_caminho_m": 6000.0,  # o caminho da corrida inteira vai de uma vez; só corridas maiores são renovadas
     "distancia_lider_m": 4.0,
     "clima": "ClearNoon",
     "acomodar_ticks": 20,        # ticks com freio de mão depois de criar o caminhão (assentar na pista)
-    "telemetria_motor": False,   # get_telemetry_data a cada tick (rpm e marcha; custa um pouco)
+    "telemetria_motor": True,    # get_telemetry_data a cada tick: rpm e a marcha de verdade (diagnóstico)
+    "max_tick_s": 90.0,          # tick que não volta nesse tempo de relógio: o CARLA ou o TM travou
 }
+
+
+class VigiaTick:
+    """Encerra o processo se um tick não voltar: o TM em modo síncrono roda neste processo e, se travar,
+    world.tick() espera para sempre (nem o Ctrl+C funciona)."""
+
+    def __init__(self, limite_s: float, ao_travar: Callable[[float], None]):
+        self.limite_s = float(limite_s)
+        self.ao_travar = ao_travar
+        self._inicio: float | None = None
+        self._parar = threading.Event()
+        self._thread = threading.Thread(target=self._vigiar, name="vigia_tick", daemon=True)
+        self._thread.start()
+
+    def comecar(self) -> None:
+        self._inicio = time.monotonic()
+
+    def terminar(self) -> None:
+        self._inicio = None
+
+    def _vigiar(self) -> None:
+        while not self._parar.wait(1.0):
+            inicio = self._inicio
+            if inicio is not None and time.monotonic() - inicio > self.limite_s:
+                self.ao_travar(time.monotonic() - inicio)
+                return
+
+    def parar(self) -> None:
+        self._parar.set()
+
+
+def _encerrar_processo_travado(espera_s: float) -> None:
+    log.critical("O tick do CARLA não voltou em %.0f s: o simulador ou o Traffic Manager travou. Feche o CARLA "
+                 "(Get-Process CarlaUE4* | Stop-Process), abra de novo e rode outra vez.", espera_s)
+    logging.shutdown()
+    os._exit(3)
 
 
 def _escalar(a: Any, b: Any) -> float:
@@ -85,6 +127,12 @@ class SimuladorCarla:
         self._d = 0.0
         self._caminho_ate = 0.0
         self._yaw_camera: float | None = None
+        self._ultima: dict[str, Any] = {}
+        self.topologia: dict[str, Any] | None = None
+        self.ajustes_mapa: dict[str, Any] = {}
+        self.fisica: dict[str, Any] = {}
+        self._vigia: VigiaTick | None = None
+        self._horizonte_caminho = 0.0
         self.frame = 0
         self.hora_inicio = datetime.now().astimezone()
 
@@ -135,7 +183,12 @@ class SimuladorCarla:
                 enable_pedestrian_navigation=bool(p.get("enable_pedestrian_navigation", True)),
             )
             log.info("Gerando o mundo OpenDRIVE no CARLA (pode levar alguns segundos)...")
-            self.world = self.client.generate_opendrive_world(self.texto_xodr, parametros)
+            texto, self.ajustes_mapa = preparar_para_carla(self.texto_xodr, p)
+            juncoes = self.ajustes_mapa["juncoes_colapsadas"]
+            log.info("Mapa para o CARLA: acostamento de %.1f m dos dois lados das vias; %d junção(ões) de passagem "
+                     "viraram ligação direta%s.", self.ajustes_mapa["acostamento_m"], len(juncoes),
+                     f" (conectores {', '.join(a['conector'] for a in juncoes)})" if juncoes else "")
+            self.world = self.client.generate_opendrive_world(texto, parametros)
         self._config_original = self.world.get_settings()
         config = self.world.get_settings()
         config.synchronous_mode = True
@@ -151,7 +204,60 @@ class SimuladorCarla:
         if clima is not None:
             self.world.set_weather(clima)
         self.spectator = self.world.get_spectator()
+        if self._vigia is None:
+            self._vigia = VigiaTick(float(self.ctm["max_tick_s"]), _encerrar_processo_travado)
+        self.topologia = self.verificar_topologia()
         self._criar_caminhao()
+
+    def verificar_topologia(self, passo_m: float = 2.0, max_desvio_m: float = 3.0) -> dict[str, Any]:
+        """Anda pelos waypoints do CARLA ao longo da rota, como o Traffic Manager vai fazer.
+
+        O TM remove o veículo quando a faixa à frente não tem continuação no mapa do CARLA (beco sem
+        saída). Isso aparece aqui antes da largada, com a via e a posição na rota.
+        """
+        carla = self.carla
+        try:
+            wp = self.mapa.get_waypoint(self._transform_largada().location, project_to_road=True,
+                                        lane_type=carla.LaneType.Driving)
+        except (RuntimeError, AttributeError):
+            wp = None
+        if wp is None or not hasattr(wp, "next"):
+            return {"verificada": False}
+        L = self.rota.comprimento
+        s_atual, andado, problemas = 0.0, 0.0, []
+        while andado < L:
+            proximos = wp.next(passo_m)
+            if not proximos:
+                problemas.append({"tipo": "beco sem saída", **self._onde(wp, s_atual)})
+                break
+            escolhido = None
+            for candidato in proximos:  # o TM escolhe o ramo mais perto do caminho (set_path)
+                loc = candidato.transform.location
+                x, y, _ = de_carla(float(loc.x), float(loc.y), 0.0)
+                s, lateral = self.rota.projetar(x, y, s_atual)
+                if escolhido is None or abs(lateral) < abs(escolhido[2]):
+                    escolhido = (candidato, s, lateral)
+            wp, s_atual, lateral = escolhido
+            andado += passo_m
+            if abs(lateral) > max_desvio_m:
+                problemas.append({"tipo": f"a faixa do CARLA sai da rota ({lateral:.1f} m)", **self._onde(wp, s_atual)})
+                break
+        resultado = {"verificada": True, "percorrido_m": round(andado, 1), "problemas": problemas}
+        if problemas:
+            p = problemas[0]
+            log.warning("Topologia do CARLA: %s em s = %.0f m da volta (via %s, faixa %s%s). O Traffic Manager remove o "
+                        "caminhão quando a faixa à frente não tem continuação: confira os links dessa via no .xodr.",
+                        p["tipo"], p["s_m"], p["via"], p["faixa"], ", junção" if p["juncao"] else "")
+        else:
+            log.info("Topologia do CARLA: a rota de %.0f m tem continuação em todas as faixas.", L)
+        return resultado
+
+    @staticmethod
+    def _onde(wp: Any, s: float) -> dict[str, Any]:
+        loc = wp.transform.location
+        return {"s_m": round(float(s), 1), "via": getattr(wp, "road_id", None), "faixa": getattr(wp, "lane_id", None),
+                "juncao": bool(getattr(wp, "is_junction", False)), "x_carla": round(float(loc.x), 1),
+                "y_carla": round(float(loc.y), 1)}
 
     # ------------------------------------------------------------------ caminhão
     def _transform_largada(self) -> Any:
@@ -179,10 +285,11 @@ class SimuladorCarla:
         if self.ator is None:
             raise RuntimeError("não foi possível criar o caminhão na largada da rota (local ocupado?)")
         log.info("Caminhão %s criado (id %d) na largada, com física.", self.ator.type_id, self.ator.id)
+        self._registrar_fisica()
         # assenta na pista com o freio de mão antes de ligar o piloto automático
         self.ator.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0, hand_brake=True))
         for _ in range(int(self.ctm["acomodar_ticks"])):
-            self.world.tick()
+            self._tick()
             self._camera_simulador()
         self.ator.apply_control(carla.VehicleControl(throttle=0.0, brake=0.0, hand_brake=False))
         porta = self.tm.get_port()
@@ -203,26 +310,69 @@ class SimuladorCarla:
                 log.warning("Câmera do painel desligada (%s); a página mostra o mapa 2D.", erro)
                 painel.encerrar()
         self._t_inicio = float(self.world.get_snapshot().timestamp.elapsed_seconds)
+        self._ultima = {}
         self.frame = 0
 
+    def _registrar_fisica(self) -> None:
+        """Loga a física do veículo: troca de marcha lenta e freio-motor forte fazem o caminhão oscilar com acelerador parcial."""
+        try:
+            f = self.ator.get_physics_control()
+            self.fisica = {"massa_kg": round(float(f.mass)), "marchas": len(f.forward_gears),
+                           "troca_marcha_s": round(float(f.gear_switch_time), 2), "cambio_automatico": bool(f.use_gear_autobox),
+                           "rpm_max": round(float(f.max_rpm)),
+                           "amortecimento_sem_acelerador": round(float(f.damping_rate_zero_throttle_clutch_engaged), 2)}
+        except (RuntimeError, AttributeError, TypeError):
+            return
+        log.info("Física do caminhão no CARLA: %s", ", ".join(f"{k} {v}" for k, v in self.fisica.items()))
+
+    def _tick(self) -> None:
+        if self._vigia is not None:
+            self._vigia.comecar()
+        try:
+            self.world.tick()
+        except RuntimeError as erro:  # o CARLA não respondeu dentro do timeout do cliente
+            raise FimDoSimulador("sem_resposta", f"o CARLA não respondeu ao tick ({erro}). Feche o simulador, abra "
+                                                 "de novo e rode outra vez.") from None
+        finally:
+            if self._vigia is not None:
+                self._vigia.terminar()
+
     def _definir_caminho(self, d: float) -> None:
-        """Caminho do TM: pontos da rota à frente do caminhão até a chegada (ou duas voltas, se for longo)."""
+        """Caminho do TM: os pontos da rota à frente do caminhão, até 30 m depois da chegada.
+
+        Vai de uma vez só: renovar no meio da corrida esvazia o buffer do TM, que relocaliza o caminhão pelo
+        waypoint mais próximo e, perto de uma junção, pode pegar outra faixa e sair da rota.
+        """
         carla = self.carla
         L = self.rota.comprimento
         passo = float(self.ctm["passo_caminho_m"])
-        fim = self.voltas * L + 30.0  # um pouco depois da chegada: o governador para o caminhão antes
-        if (fim - d) / passo > float(self.ctm["max_pontos_caminho"]):
-            fim = (math.floor(d / L) + 2) * L
+        self._horizonte_caminho = float(self.ctm["horizonte_caminho_m"])
+        fim = min(self.voltas * L + 30.0, d + self._horizonte_caminho)  # passa da chegada: o governador para antes
         pontos = []
         dist = d + float(self.ctm["inicio_caminho_m"])
         while dist < fim:
             p = self.rota.ponto(dist)
             x, y, _ = para_carla(p.x, p.y, p.rumo)
-            pontos.append(carla.Location(x=x, y=y, z=0.0))
+            local = carla.Location(x=x, y=y, z=0.0)
+            if not self._dentro_de_juncao(local):
+                pontos.append(local)
             dist += passo
         self.tm.set_path(self.ator, pontos, True)
         self._caminho_ate = fim
         log.debug("Caminho do TM: %d pontos de d = %.0f a %.0f m.", len(pontos), d, fim)
+
+    def _dentro_de_juncao(self, local: Any) -> bool:
+        """Pontos dentro de jun\u00e7\u00f5es ficam fora do caminho do TM.
+
+        Numa bifurca\u00e7\u00e3o, o TM escolhe o ramo cuja sa\u00edda est\u00e1 na mesma via do pr\u00f3ximo ponto do caminho; se esse
+        ponto ainda est\u00e1 dentro da jun\u00e7\u00e3o, ele escolhe pela dist\u00e2ncia e pode errar (na VM, a 751 m da volta,
+        ele pegou o conector 306 em vez do 305 e saiu da rota).
+        """
+        try:
+            wp = self.mapa.get_waypoint(local, project_to_road=True, lane_type=self.carla.LaneType.Driving)
+        except (RuntimeError, AttributeError):
+            return False
+        return bool(getattr(wp, "is_junction", False)) if wp is not None else False
 
     def _remover_caminhao(self) -> None:
         if self.camera_painel is not None:
@@ -242,7 +392,7 @@ class SimuladorCarla:
     def reiniciar(self) -> None:
         """Volta à largada com um caminhão novo (entre as baterias do benchmark)."""
         self._remover_caminhao()
-        self.world.tick()
+        self._tick()
         self._criar_caminhao()
 
     # ------------------------------------------------------------------ gravação
@@ -291,20 +441,25 @@ class SimuladorCarla:
     def passo(self, v_desejada: float) -> dict[str, Any]:
         """Um tick: velocidade desejada (m/s) ao TM, avança o mundo e devolve a telemetria."""
         self.tm.set_desired_speed(self.ator, max(0.0, float(v_desejada)) * 3.6)
-        self.world.tick()
+        self._tick()
         self.frame += 1
+        if not getattr(self.ator, "is_alive", True):
+            raise FimDoSimulador("removido", self._diagnostico_remocao())
         snap = self.world.get_snapshot()
         t = float(snap.timestamp.elapsed_seconds) - self._t_inicio
-        tf = self.ator.get_transform()
+        try:
+            tf = self.ator.get_transform()
+        except RuntimeError:  # destruído entre o tick e a leitura
+            raise FimDoSimulador("removido", self._diagnostico_remocao()) from None
         vel, acc, ang = self.ator.get_velocity(), self.ator.get_acceleration(), self.ator.get_angular_velocity()
         frente, direita = tf.get_forward_vector(), tf.get_right_vector()
         v = max(0.0, _escalar(vel, frente))
         x, y, rumo = de_carla(float(tf.location.x), float(tf.location.y), float(tf.rotation.yaw))
         s, lateral = self.rota.projetar(x, y, self._d % self.rota.comprimento)
         self._d = self.rota.avancar_distancia(self._d, s)
-        chegada = self.voltas * self.rota.comprimento
-        if self._caminho_ate < chegada and self._d > self._caminho_ate - 0.5 * self.rota.comprimento:
-            self._definir_caminho(self._d)  # caminho longo: renova meia volta antes de acabar
+        chegada = self.voltas * self.rota.comprimento + 30.0
+        if self._caminho_ate < chegada - 1e-6 and self._d > self._caminho_ate - 0.5 * self._horizonte_caminho:
+            self._definir_caminho(self._d)  # só em corridas mais longas que o horizonte
         controle = self.ator.get_control()
         linha = {
             "frame": self.frame,
@@ -335,7 +490,25 @@ class SimuladorCarla:
                 pass
         if not self.sem_render:
             self._camera_simulador(tf)
+        self._ultima = linha
         return linha
+
+    def _diagnostico_remocao(self) -> str:
+        u = self._ultima
+        texto = (f"o CARLA removeu o caminhão no tick {self.frame}. Último estado: d = {u.get('d', 0.0):.1f} m "
+                 f"(s = {u.get('s', 0.0):.1f} m na volta), {3.6 * u.get('speed_mps', 0.0):.0f} km/h, "
+                 f"z = {u.get('z', 0.0):.2f} m, desvio da rota {u.get('desvio_m', 0.0):.1f} m")
+        try:
+            loc = self.carla.Location(x=u["x_carla"], y=u["y_carla"], z=u["z"])
+            wp = self.mapa.get_waypoint(loc, project_to_road=True, lane_type=self.carla.LaneType.Driving)
+            texto += f", via {wp.road_id} faixa {wp.lane_id}{' (junção)' if wp.is_junction else ''}"
+        except (KeyError, RuntimeError, AttributeError):
+            pass
+        problemas = (self.topologia or {}).get("problemas") or []
+        if problemas:
+            texto += f". A verificação da topologia achou {problemas[0]['tipo']} em s = {problemas[0]['s_m']:.0f} m"
+        return (texto + ". Causas prováveis: a faixa à frente não tem continuação no mapa do CARLA (o Traffic Manager "
+                "remove o veículo num beco sem saída) ou o caminhão caiu da pista (z muito baixo).")
 
     def _camera_simulador(self, tf: Any = None) -> None:
         """A câmera da janela do CARLA (spectator) segue o caminhão, com o giro suavizado."""
@@ -365,6 +538,9 @@ class SimuladorCarla:
         """Para o gravador, devolve o CARLA ao modo assíncrono (senão o simulador fica parado), tira o TM
         do modo síncrono e remove a câmera e o caminhão. Idempotente."""
         self.parar_gravacao()
+        if self._vigia is not None:
+            self._vigia.parar()
+            self._vigia = None
         if self.world is not None and self._config_original is not None:
             try:
                 self.world.apply_settings(self._config_original)

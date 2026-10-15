@@ -104,7 +104,7 @@ def esperar(condicao: Callable[[], bool], prazo_s: float = 10.0) -> None:
 
 def test_saude_e_rotas_sem_sessao(cfg, tmp_path):
     with TestClient(montar_app(cfg, tmp_path)) as http:
-        assert http.get("/saude").json() == {"ok": True, "sessao": None, "clientes_ws": 0}
+        assert http.get("/saude").json() == {"ok": True, "sessao": None, "clientes_ws": 0, "agentes": None}
         for metodo, rota in (("get", "/sessao"), ("post", "/sessao/telemetria"), ("delete", "/sessao")):
             corpo = {"json": {"linhas": []}} if metodo == "post" else {}
             assert getattr(http, metodo)(rota, **corpo).status_code == 404

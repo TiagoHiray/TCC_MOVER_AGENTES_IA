@@ -33,6 +33,15 @@ class Trajetoria:
         sel = (self.t >= t_ini - 1e-9) & (self.t < t_fim - 1e-9)
         return Trajetoria(self.t[sel], self.d[sel], self.v[sel], self.a[sel], self.v_desejada[sel], self.parado[sel])
 
+    def para_dict(self) -> dict[str, list]:
+        """Série completa, sem arredondar (o plano que o caminhão manda aos agentes)."""
+        return {campo: getattr(self, campo).tolist() for campo in ("t", "d", "v", "a", "v_desejada", "parado")}
+
+    @classmethod
+    def de_dict(cls, dados: dict[str, list]) -> "Trajetoria":
+        return cls(*(np.asarray(dados[c], dtype=float) for c in ("t", "d", "v", "a", "v_desejada")),
+                   np.asarray(dados["parado"], dtype=bool))
+
     def para_json(self, passo: int = 4, casas: int = 2) -> dict[str, list[float]]:
         """Série reduzida para a interface (a 20 Hz, passo 4 = 5 Hz)."""
         idx = np.arange(0, len(self.t), max(1, passo))

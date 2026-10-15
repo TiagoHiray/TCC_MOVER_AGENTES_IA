@@ -11,6 +11,13 @@ Rotas da corrida autônoma (quem chama é o piloto, mover.autonomo.dirigir):
     GET    /benchmark/ultimo      -> resumo do benchmark mais recente (data/benchmark/<id>/resumo.json)
     WS     /ws                    -> histórico ao conectar e, depois, as mensagens ao vivo (ver sessao.py)
 
+Rotas da camada agêntica (o caminhão manda o plano e recebe as alterações por HTTP; ver
+mover/agentes/servico.py e mover/autonomo/canal_agentes.py):
+    POST   /agentes/sessao        -> abre a sessão dos agentes (voltas, LLM, ML); monta o Decisor
+    POST   /agentes/plano         -> plano dos próximos 10 s + estado do governador; 202, ou as mensagens com "esperar"
+    GET    /agentes/decisoes?desde=N -> mensagens das decisões (regra, final, vazia, erro) a partir da N-ésima
+    DELETE /agentes/sessao        -> encerra a sessão dos agentes
+
 Rotas da interface (página, câmera do CARLA, cena 2D e chat): ver mover/interface/rotas.py.
 """
 
@@ -23,10 +30,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
+from mover.agentes.servico import ServicoAgentes, criar_llm_decisoes
 from mover.agentes.supervisor import Supervisor
 from mover.config import caminho, carregar_yaml
 from mover.interface.rotas import instalar_interface
@@ -67,6 +75,21 @@ class DecisaoModelo(BaseModel):
     opcao: str
 
 
+class SessaoAgentesModelo(BaseModel):
+    voltas: int = Field(1, ge=1, le=1000)
+    usar_llm: bool = True
+    usar_ml: bool = True
+    provedor: str | None = None
+    modelo: str | None = None
+    comprimento_volta_m: float | None = Field(None, ge=0.0)  # confere se os dois lados têm o mesmo plano de missão
+
+
+class PlanoAgentesModelo(BaseModel):
+    plano: dict[str, Any]          # PlanoFuturo.para_json()
+    governador: dict[str, Any]     # Governador.exportar_estado()
+    esperar: bool = False
+
+
 def ultimo_benchmark(pasta: Path) -> dict[str, Any] | None:
     resumos = sorted(pasta.glob("*/resumo.json"), key=lambda p: p.stat().st_mtime) if pasta.exists() else []
     if not resumos:
@@ -79,8 +102,13 @@ def ultimo_benchmark(pasta: Path) -> dict[str, Any] | None:
 
 def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str, Any] | None = None,
               fabrica_supervisor: Callable[[OpcoesSessao], Supervisor] | None = None,
-              fabrica_llm_chat: Callable[[Any], Any] | None = None, cfg_autonomo: dict[str, Any] | None = None) -> FastAPI:
-    """Monta o app. `fabrica_supervisor` e `fabrica_llm_chat` existem para os testes."""
+              fabrica_llm_chat: Callable[[Any], Any] | None = None, cfg_autonomo: dict[str, Any] | None = None,
+              montagem: Any = None) -> FastAPI:
+    """Monta o app. `fabrica_supervisor` e `fabrica_llm_chat` existem para os testes.
+
+    `montagem` (mover.autonomo.montagem.Montagem) dá o plano de missão e os parâmetros dos agentes;
+    sem ela, o servidor monta a partir do config/autonomo.yaml na primeira sessão dos agentes.
+    """
     cfg_agentes = cfg_agentes or carregar_yaml("config/agentes.yaml")
     cfg_simulacao = cfg_simulacao if cfg_simulacao is not None else (
         carregar_yaml("config/simulacao.yaml") if caminho("config/simulacao.yaml").exists() else {})
@@ -90,12 +118,17 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
     pasta_benchmark = caminho((cfg_autonomo.get("benchmark") or {}).get("pasta", "data/benchmark"))
     difusor = Difusor()
     estado: dict[str, SessaoAutonoma | None] = {"sessao": None}
+    agentes: dict[str, Any] = {"servico": None, "montagem": montagem}
     trava_sessao = asyncio.Lock()
+    trava_agentes = asyncio.Lock()
 
     @asynccontextmanager
     async def ciclo_de_vida(app: FastAPI):
         difusor.ligar(asyncio.get_running_loop())
         yield
+        if agentes["servico"] is not None:
+            agentes["servico"].encerrar()
+            agentes["servico"] = None
         sessao = estado["sessao"]
         if sessao is not None and not sessao.encerrada:
             await asyncio.to_thread(sessao.encerrar, None, 5.0)
@@ -115,7 +148,9 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
     @app.get("/saude")
     async def saude() -> dict[str, Any]:
         sessao = estado["sessao"]
-        return {"ok": True, "sessao": sessao.info() if sessao else None, "clientes_ws": difusor.n_clientes}
+        servico = agentes["servico"]
+        return {"ok": True, "sessao": sessao.info() if sessao else None, "clientes_ws": difusor.n_clientes,
+                "agentes": servico.info() if servico else None}
 
     @app.post("/sessao")
     async def criar_sessao(opcoes: OpcoesSessaoModelo) -> dict[str, Any]:
@@ -176,6 +211,75 @@ def criar_app(cfg_agentes: dict[str, Any] | None = None, cfg_simulacao: dict[str
         if dados is None:
             raise HTTPException(404, {"mensagem": "nenhum benchmark ainda; rode python -m mover.autonomo.benchmark"})
         return para_json(dados)
+
+    # ------------------------------------------------------------------ camada agêntica
+    def servico_atual() -> ServicoAgentes:
+        servico = agentes["servico"]
+        if servico is None:
+            raise HTTPException(404, {"mensagem": "nenhuma sessão dos agentes; abra com POST /agentes/sessao"})
+        return servico
+
+    def montar_servico(opcoes: SessaoAgentesModelo) -> tuple[ServicoAgentes, Any]:
+        if agentes["montagem"] is None:
+            from mover.autonomo.montagem import montar
+
+            agentes["montagem"] = montar(cfg_autonomo or None)
+        m = agentes["montagem"]
+        if opcoes.comprimento_volta_m and abs(opcoes.comprimento_volta_m - m.plano.comprimento) > 1.0:
+            raise ValueError(f"plano de missão diferente: o caminhão tem {opcoes.comprimento_volta_m:.0f} m por volta e "
+                             f"o servidor dos agentes, {m.plano.comprimento:.0f} m")
+        suavizador = m.suavizador() if opcoes.usar_ml else None  # treina o modelo de ML na primeira vez (~1-2 min)
+        llm = (criar_llm_decisoes(cfg_agentes, opcoes.provedor, opcoes.modelo, float(m.cfg_decisao.get("prazo_llm_s", 6.0)))
+               if opcoes.usar_llm else None)
+
+        def governador(estado_gov: dict[str, Any]):
+            return m.governador(str(estado_gov.get("modo", "agentes")), estado_gov.get("n_voltas")).restaurar_estado(estado_gov)
+
+        return ServicoAgentes(m.decisor(opcoes.voltas, llm, suavizador), llm is not None, governador), m
+
+    @app.post("/agentes/sessao")
+    async def abrir_agentes(opcoes: SessaoAgentesModelo) -> dict[str, Any]:
+        async with trava_agentes:
+            if agentes["servico"] is not None:
+                agentes["servico"].encerrar()
+                agentes["servico"] = None
+            try:
+                servico, m = await asyncio.to_thread(montar_servico, opcoes)
+            except ValueError as erro:
+                raise HTTPException(409, {"mensagem": str(erro)}) from None
+            except SystemExit as erro:  # sem o plano de missão no servidor
+                raise HTTPException(503, {"mensagem": str(erro)}) from None
+            agentes["servico"] = servico
+            info = servico.info()
+            log.info("Agentes: %d volta(s), LLM %s, ML %s.", opcoes.voltas, info["llm"] or "-", info["ml"] or "-")
+            return {**info, "voltas": opcoes.voltas, "comprimento_volta_m": round(m.plano.comprimento, 1)}
+
+    @app.post("/agentes/plano")
+    async def receber_plano(pedido: PlanoAgentesModelo, resposta: Response) -> dict[str, Any]:
+        servico = servico_atual()
+        try:
+            plano, governador = servico.ler(pedido.model_dump())
+        except (KeyError, TypeError, ValueError, IndexError) as erro:
+            raise HTTPException(422, {"mensagem": f"plano inválido ({type(erro).__name__}: {erro})"}) from None
+        if pedido.esperar:
+            return {"mensagens": para_json(await asyncio.to_thread(servico.processar_agora, plano, governador))}
+        servico.enviar(plano, governador)
+        resposta.status_code = 202
+        return {"aceito": True, "bloco": plano.bloco}
+
+    @app.get("/agentes/decisoes")
+    async def ver_decisoes(desde: int = 0) -> dict[str, Any]:
+        mensagens, total, ocupado = servico_atual().mensagens_desde(desde)
+        return {"mensagens": para_json(mensagens), "total": total, "ocupado": ocupado}
+
+    @app.delete("/agentes/sessao")
+    async def encerrar_agentes() -> dict[str, Any]:
+        async with trava_agentes:
+            servico = servico_atual()
+            info = servico.info()
+            servico.encerrar()
+            agentes["servico"] = None
+            return info
 
     @app.websocket("/ws")
     async def websocket(ws: WebSocket) -> None:

@@ -16,7 +16,7 @@ No CARLA a saída vira TrafficManager.set_desired_speed(caminhao, km/h) a cada t
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 from typing import Any
 
 from mover.autonomo.missao import Instancia, PlanoMissao
@@ -72,6 +72,7 @@ class ConfigGovernador:
     v_parar_mps: float = 0.15
     abaixo_do_limite_mps: float = 0.3   # o envelope mira ~1 km/h abaixo do limite da zona
     ressincronizar_mps: float = 1.5
+    soltar_freio_s: float = 1.5         # saindo da imobilidade, a referência fica colada na velocidade só por esse tempo
     desacel_recuperacao_mps2: float = 2.5
     horizonte_m: float = 250.0
     olhar_atras_m: float = 80.0
@@ -114,6 +115,7 @@ class Governador:
         self._v_ref = 0.0
         self._a_ref = 0.0
         self._a_avanco = 0.0
+        self._lento_s = 0.0
         self.terminou = False
         self.ultimo: dict[str, Any] = {}
 
@@ -126,6 +128,10 @@ class Governador:
 
     def ja_passou(self, chave: str) -> bool:
         return chave in self._feitas
+
+    def acompanhar_comando(self, v_mps: float) -> None:
+        """O piloto recebeu mais que a referência (arrancada no CARLA): a referência continua dali, sem degrau."""
+        self._v_ref = max(self._v_ref, v_mps)
 
     def pode_intervir(self, chave: str) -> bool:
         """Uma intervenção para o elemento ainda muda algo: ele não passou, o caminhão não está parado
@@ -148,6 +154,41 @@ class Governador:
         novo._feitas = set(self._feitas)
         novo.ultimo = dict(self.ultimo)
         return novo
+
+    def exportar_estado(self) -> dict[str, Any]:
+        """Estado em JSON: o caminhão o manda com o plano, e os agentes simulam a partir dele."""
+        return {
+            "modo": self.modo,
+            "n_voltas": self.n_voltas,
+            "intervencoes": {chave: asdict(interv) for chave, interv in self.intervencoes.items()},
+            "disparadas": sorted(self._disparadas),
+            "feitas": sorted(self._feitas),
+            "parada": [self._parada[0], float(self._parada[1])] if self._parada is not None else None,
+            "retomada": asdict(self._retomada) if self._retomada is not None else None,
+            "v_ref": float(self._v_ref),
+            "a_ref": float(self._a_ref),
+            "a_avanco": float(self._a_avanco),
+            "lento_s": float(self._lento_s),
+            "terminou": bool(self.terminou),
+            "ultimo": dict(self.ultimo),
+        }
+
+    def restaurar_estado(self, estado: dict[str, Any]) -> "Governador":
+        """Carrega o estado de exportar_estado() (o plano e a configuração vêm do construtor)."""
+        self.intervencoes = {chave: Intervencao(**dados) for chave, dados in (estado.get("intervencoes") or {}).items()}
+        self._disparadas = set(estado.get("disparadas") or [])
+        self._feitas = set(estado.get("feitas") or [])
+        parada = estado.get("parada")
+        self._parada = (str(parada[0]), float(parada[1])) if parada else None
+        retomada = estado.get("retomada")
+        self._retomada = Intervencao(**retomada) if retomada else None
+        self._v_ref = float(estado.get("v_ref", 0.0))
+        self._a_ref = float(estado.get("a_ref", 0.0))
+        self._a_avanco = float(estado.get("a_avanco", 0.0))
+        self._lento_s = float(estado.get("lento_s", 0.0))
+        self.terminou = bool(estado.get("terminou", False))
+        self.ultimo = dict(estado.get("ultimo") or {})
+        return self
 
     # ------------------------------------------------------------------ tick
     def velocidade_desejada(self, d: float, v: float, a: float, dt: float) -> float:
@@ -233,8 +274,10 @@ class Governador:
         if lim.parada and lim.v < 0.5:
             # fim de parada: a desaceleração some junto com a velocidade (sem tranco ao parar)
             a_desejada = max(a_desejada, -cfg.ganho_parada * self._v_ref)
-        if v < 0.5 and self._v_ref - v > 0.25 and a_desejada > 0.0:
-            # saindo da imobilidade: o freio ainda está soltando; não acumula pedido de aceleração
+        self._lento_s = self._lento_s + dt if v < 1.0 else 0.0  # histerese: oscilar em torno de 0,5 m/s não zera
+        if v < 0.5 and self._v_ref - v > 0.25 and a_desejada > 0.0 and self._lento_s < cfg.soltar_freio_s:
+            # saindo da imobilidade: o freio ainda está soltando; não acumula pedido de aceleração. Depois disso a
+            # referência volta a crescer: o piloto do CARLA quase não acelera um caminhão pedindo +1 km/h
             self._v_ref = v + 0.25
             a_desejada = min(a_desejada, 0.2)
         passo = cfg.jerk_max_mps3 * dt
@@ -271,7 +314,7 @@ class Governador:
         return _Limite(v_env, inst.chave, "suave", interv, inst.e_parada)
 
     def _parado(self, chave: str) -> float:
-        self._v_ref, self._a_ref, self._a_avanco = 0.0, 0.0, 0.0
+        self._v_ref, self._a_ref, self._a_avanco, self._lento_s = 0.0, 0.0, 0.0, 0.0
         self.ultimo = {"v_alvo_kmh": 0.0, "v_desejada_kmh": 0.0, "limitado_por": chave, "modo_tick": "parado",
                        "parado": True}
         return 0.0

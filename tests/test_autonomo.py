@@ -175,6 +175,35 @@ def test_governador_nao_aceita_intervencao_depois_da_frenagem_bruta(m):
     assert not gov.decidida("lombada_2@0")  # o clone não muda o original
 
 
+def test_governador_nao_deixa_o_caminhao_rastejando_com_um_piloto_que_ignora_pedidos_pequenos(m):
+    # o TM do CARLA quase não acelera um caminhão de 9 t pedindo +1 km/h: aqui, abaixo de 0,4 m/s de diferença, nada
+    gov = m.governador("agentes", 1)
+    gov.definir("partida@0", Intervencao.da_opcao("suave", m.opcoes))
+    d, v, v_max, dt = 0.0, 0.0, 0.0, 0.05
+    for _ in range(int(20.0 / dt)):
+        v_des = gov.velocidade_desejada(d, v, 0.0, dt)
+        v = v + 0.8 * dt if v_des - v > 0.4 else max(0.0, v - 0.2 * dt)
+        d, v_max = d + v * dt, max(v_max, v)
+    assert v_max > 2.0 and d > 20.0  # na trava antiga, o caminhão ficava abaixo de 0,5 m/s para sempre
+    assert gov.cfg.soltar_freio_s == 1.5
+
+
+def test_tm_do_carla_nunca_recebe_um_alvo_minusculo_quando_o_governador_quer_andar(m):
+    # o PID do TM do CARLA, com erro normalizado pelo alvo, oscila com alvos de 1-3 km/h (corrida 20261011_121132)
+    decisor = m.decisor(1, None)
+    op = OpcoesConducao(voltas=1, usar_llm=False, assincrona=False, sem_espera=True, v_min_comando_mps=5.0 / 3.6)
+    res = Conducao(m.plano, m.simulador_substituto(), m.governador("agentes", 1), decisor, op, m.caminhao, m.consumo).rodar()
+    decisor.encerrar()
+    assert res.completa
+    andando = [l for l in res.linhas if l["modo_tick"] != "parado" and (l["v_alvo_kmh"] or 0.0) > 5.0
+               and l["v_desejada_kmh"] > 0.05 * 3.6]  # pedir zero (frear) continua valendo
+    assert andando and min(l["v_desejada_kmh"] for l in andando) >= 5.0 - 1e-9
+    # sem degrau no pedido ao sair da arrancada (no CARLA, o degrau virava freio cheio na saída das lombadas)
+    pedidos = [l["v_desejada_kmh"] for l in res.linhas if l["modo_tick"] != "parado"]
+    assert max(a - b for a, b in zip(pedidos, pedidos[1:])) < 1.0
+    assert m.v_min_comando("carla") == pytest.approx(5.0 / 3.6) and m.v_min_comando("substituto") == 0.0
+
+
 def test_consumo_so_marcha_lenta_freando_e_metricas_contam_eventos():
     c, p = ParametrosCaminhao(), ParametrosConsumo()
     freando = taxa_combustivel_l_s(potencia_rodas_kw(np.array([8.0]), np.array([-3.0]), 0.0, c), p)[0]
@@ -254,6 +283,20 @@ def test_supervisor_llm_escolhe_dentro_das_opcoes_seguras_com_guarda_de_numeros(
     dec, _ = _decisao_com_llm(m, [{"opcao": regra.recomendada, "texto": "atrasado"}], atraso_s=0.5, prazo_s=0.1)
     assert dec.origem == "regra" and "não respondeu" in dec.motivo
 
+    # resposta atrasada ainda ocupando o LLM: a decisão seguinte não entra na fila atrás dela (cascata no CARLA)
+    cfg = dict(m.cfg_decisao, prazo_llm_s=0.1)
+    llm = LLMRoteiro([{"opcao": regra.recomendada, "texto": "atrasado"}] * 3, atraso_s=1.5)
+    decisor = Decisor(m.plano, m.modelo(), cfg, llm=llm, opcoes=m.opcoes, n_voltas=1)
+    gov = m.governador("agentes", 1)
+    plano = decisor.planejador().planejar(gov, PARADO, 0, janela_inicial(0.0, 10.0))
+    motivos = [decisor.decidir(plano, gov).motivo]
+    motivos.append(decisor.decidir(plano, gov).motivo)
+    time.sleep(1.6)
+    motivos.append(decisor.decidir(plano, gov).motivo)
+    decisor.encerrar()
+    assert "não respondeu" in motivos[0] and "ainda respondia" in motivos[1] and "não respondeu" in motivos[2]
+    assert len(llm.prompts) == 2
+
 
 # ---------------------------------------------------------------------------------------------
 # Laço de condução (simulador substituto)
@@ -285,6 +328,15 @@ def test_corrida_com_agentes_gasta_menos_e_nao_tem_trancos(m):
     linha = agentes.linhas[-1]
     assert linha["combustivel_ml"] > 0 and linha["modo"] == "agentes" and linha["v_desejada_kmh"] == 0.0
     assert {"t", "speed_kmh", "v_limite_kmh", "custo_r", "co2_g", "bloco", "volta"} <= set(linha)
+    # o diagnóstico por trecho soma o tempo da corrida e diz quem limitava em cada trecho
+    from mover.autonomo.diagnostico import eventos_da_corrida, resumo_por_trecho
+
+    tabela = resumo_por_trecho(pd.DataFrame(agentes.linhas))
+    assert tabela["tempo_s"].sum() == pytest.approx(len(agentes.linhas) * 0.05)
+    assert {"v_desejada_kmh", "v_alvo_kmh", "limitado_por", "modo_tick", "trocas_acel", "trocas_marcha"} <= set(tabela)
+    eventos = eventos_da_corrida(pd.DataFrame(bruto.linhas), m.limiares, m.plano.comprimento)
+    assert (eventos["nivel"] == "critico").sum() == met_b["eventos_criticos"]
+    assert {"s_m", "jerk_mps3", "acelerador", "freio", "limitado_por"} <= set(eventos)
 
 
 def test_corrida_ao_vivo_com_agentes_numa_thread_e_llm_lento(m):

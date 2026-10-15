@@ -1,0 +1,21 @@
+# Segredos e ambientes locais
+.env
+.venv/
+venv/
+venv_carla/
+env_carla/
+.forge/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Saídas de execução (cada corrida e cada benchmark geram os próprios arquivos)
+data/autonomo/corridas/
+data/autonomo/sessoes/
+# data/benchmark/
+data/agentes/
+
+# Notas locais
+# EXECUCAO_VM.md

@@ -1,0 +1,97 @@
+{
+  "data": "2026-10-14T22:04:14",
+  "simulador": "carla",
+  "voltas": 3,
+  "combustivel": "diesel",
+  "preco_r_l": 6.0,
+  "co2_kg_l": 2.68,
+  "modelo_consumo": "VT-CPFM (Willans + termo quadrático) sobre a velocidade e a aceleração medidas",
+  "llm_decisoes": "falso",
+  "suavizador_ml": "floresta aleatória (2000 situações simuladas)",
+  "agentes_http": "http://127.0.0.1:55736",
+  "requisicoes_agentes": 36,
+  "decisoes": 34,
+  "decisoes_por_origem": {
+    "llm": 30,
+    "regra": 4
+  },
+  "opcoes": {
+    "firme": 1,
+    "ml": 33
+  },
+  "fim": {
+    "sem_agentes": "chegada",
+    "com_agentes": "chegada"
+  },
+  "sem_agentes": {
+    "voltas": 3,
+    "por_volta": {
+      "tempo_s": 168.783,
+      "distancia_m": 775.1,
+      "vel_media_kmh": 16.533,
+      "combustivel_ml": 330.253,
+      "custo_r": 1.982,
+      "co2_g": 885.067,
+      "eventos_atencao": 1.0,
+      "eventos_criticos": 24.667,
+      "eventos_total": 25.667,
+      "jerk_max_mps3": 75.763,
+      "acel_min_mps2": -14.24,
+      "acel_max_mps2": 6.333,
+      "energia_freio_wh": 544.867
+    },
+    "total": {
+      "tempo_s": 506.35,
+      "combustivel_ml": 990.76,
+      "custo_r": 5.945,
+      "co2_g": 2655.2,
+      "eventos_total": 77.0
+    }
+  },
+  "com_agentes": {
+    "voltas": 3,
+    "por_volta": {
+      "tempo_s": 196.167,
+      "distancia_m": 775.567,
+      "vel_media_kmh": 14.233,
+      "combustivel_ml": 231.263,
+      "custo_r": 1.388,
+      "co2_g": 619.767,
+      "eventos_atencao": 4.667,
+      "eventos_criticos": 5.333,
+      "eventos_total": 10.0,
+      "jerk_max_mps3": 25.03,
+      "acel_min_mps2": -3.9,
+      "acel_max_mps2": 6.497,
+      "energia_freio_wh": 250.6
+    },
+    "total": {
+      "tempo_s": 588.5,
+      "combustivel_ml": 693.79,
+      "custo_r": 4.163,
+      "co2_g": 1859.3,
+      "eventos_total": 30.0
+    }
+  },
+  "diferenca_pct": {
+    "combustivel_ml": -29.97,
+    "tempo_s": 16.22,
+    "eventos_total": -61.04,
+    "energia_freio_wh": -54.01
+  },
+  "extrapolacao": {
+    "voltas": 100,
+    "litros_sem_agentes": 32.5,
+    "litros_com_agentes": 22.68,
+    "economia_l": 9.82,
+    "economia_r": 58.92,
+    "economia_co2_kg": 26.32,
+    "eventos_sem_agentes": 2599,
+    "eventos_com_agentes": 903,
+    "tempo_extra_min": 44.4
+  },
+  "arquivos": {
+    "resultados": "C:\\CARLA_0.9.16\\PythonAPI\\tcc_e\\data\\benchmark\\20261014_220254\\resultados.csv",
+    "figura": "C:\\CARLA_0.9.16\\PythonAPI\\tcc_e\\data\\benchmark\\20261014_220254\\comparativo.png"
+  }
+}
