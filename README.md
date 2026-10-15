@@ -18,7 +18,7 @@ N voltas sem e N voltas com os agentes (diesel, R$, CO2, eventos bruscos e tempo
 para 100 voltas). Um script grava a corrida em MP4.
 
 ```
-mapa do CARLA (mapa_final.xodr) + OSM do campus + config
+mapa do CARLA (campus_maua.xodr) + OSM do campus + config
    |  rota, lombadas, faixa de pedestre, curvas e portaria
    v
 plano de missão (config/missao.yaml)
@@ -139,7 +139,7 @@ C:\CARLA_0.9.16\CarlaUE4.exe -quality-level=Low -world-port=2000
 
 Para gravar o vídeo, troque por `-quality-level=Epic`: é essa opção que define a qualidade da imagem das câmeras. Com o script, `./scripts/rodar_gemeo.sh carla` abre o CARLA do mesmo jeito.
 
-Os comandos geram o mundo a partir de `data/mapas/mapa_final.xodr` e criam o caminhão `vehicle.carlamotors.european_hgv` na largada. A câmera da janela (spectator) passa a seguir o caminhão. Use `--camera cima` para ver de cima ou `--camera livre` para mexer a câmera você mesmo.
+Os comandos geram o mundo a partir de `data/mapas/campus_maua.xodr` e criam o caminhão `vehicle.carlamotors.european_hgv` na largada. A câmera da janela (spectator) passa a seguir o caminhão. Use `--camera cima` para ver de cima ou `--camera livre` para mexer a câmera você mesmo.
 
 ## 2. Coletar os dados de uma volta no CARLA
 
@@ -478,20 +478,20 @@ nos freios).
 
 ## Plano de missão
 
-`config/missao.yaml` tem a rota (~780 m, sentido horário, cruzeiro de 30 km/h), as zonas e a
-parada:
+`config/missao.yaml` tem a rota (~784 m no anel de mão única do `campus_maua.xodr`: R01, R10+R07, R02 e
+R11, sentido anti-horário, cruzeiro de 30 km/h), as zonas e a parada:
 
-- 7 lombadas a 10 km/h;
-- a faixa de pedestre do OSM a 15 km/h;
-- 4 curvas, com limite por aceleração lateral de 1,6 m/s²;
-- a parada de 4 s na portaria (o portão do OSM).
+- 4 lombadas a 10 km/h (objetos `speedBump` do mapa que ficam no anel; as outras 2 estão na R03);
+- 8 faixas de pedestre a 15 km/h (objetos `crosswalk` do mapa);
+- 3 curvas, com limite por aceleração lateral de 1,6 m/s²;
+- a parada de 4 s no portão (o nó do OSM, ou o ponto `portoes` do config quando o OSM não está na pasta).
 
 Tudo sai do mapa do CARLA, do OSM do campus e do `config/autonomo.yaml` (seção `gerar_missao`):
 
-- a rota: o itinerário (`rota.vias`) lista as vias do `mapa_final.xodr` na ordem da volta; os conectores das junções são achados no grafo de faixas, e a rota segue o centro das faixas no sentido de tráfego;
-- as lombadas: pontos fixos do mapa (`lombadas`), porque o OpenDRIVE não tem lombadas;
+- a rota: o itinerário (`rota.vias`) lista as vias do mapa na ordem da volta; os conectores das junções são achados no grafo de faixas, e a rota segue o centro das faixas no sentido de tráfego;
+- as lombadas e as faixas de pedestre: os objetos do mapa; só num mapa sem `speedBump` (o antigo `mapa_final.xodr`) valem os pontos fixos `lombadas` e as faixas do OSM;
 - as curvas: a geometria da rota;
-- a faixa de pedestre e a portaria: o OSM, projetado no mapa pela georreferência do `.xodr`.
+- a portaria: o OSM, projetado no mapa pela georreferência do `.xodr`.
 
 Para gerar o plano de novo:
 
@@ -573,7 +573,7 @@ São 108 testes, sem CARLA e sem LLM de verdade (rodam da raiz do repositório).
 - **O efeito da alteração é previsto antes e medido depois.** Os números que valem são os medidos no benchmark no CARLA.
 - **O consumo é estimado** pelo VT-CPFM: o CARLA não tem combustível.
 - **Nada foi rodado no CARLA de verdade aqui.** O desenvolvimento foi feito sem CARLA e sem GPU. O lado CARLA foi conferido contra a API do pacote 0.9.16 e testado com um módulo falso. Na primeira corrida no CARLA, confira se o caminhão segue a rota (`set_path`), se `get_all_actions` devolve as manobras (senão, o plano usa a curvatura da rota) e se a reprodução da gravação carrega o mapa OpenDRIVE (senão, use `--modo poses` no vídeo).
-- **O mapa mandado ao CARLA é ajustado** (`src/mover/autonomo/xodr_carla.py`; o arquivo em disco não muda). As vias do `mapa_final.xodr` têm uma faixa só, de 3,2 m, sem chão ao lado: na VM, o caminhão cortou uma curva, ficou com as rodas fora da malha (parado a 82,5 m, z = -0,11 m) e o Traffic Manager acabou removendo-o. Antes de gerar o mundo, cada via ganha um acostamento de 2 m de cada lado (`carla.opendrive.acostamento_m`, faixa que o TM não usa), e as junções de passagem com conector menor que 1 m viram ligação direta via -> via (`colapsar_conectores_m`). Na largada, o log confere a topologia do CARLA ao longo da rota. Se o caminhão ficar parado 30 s com alvo acima de 3,6 km/h, a corrida termina como `preso`; se ficar mais de 12 m longe da rota por 3 s, como `fora_da_rota` (a 4 m o log já avisa); se o CARLA o remover, como `removido`; se o CARLA não responder ao tick, como `sem_resposta`. Em todos os casos ela grava o que andou e o log diz a posição. O caminho passado ao Traffic Manager (`set_path`) vai de uma vez só, da largada até 30 m depois da chegada: renová-lo no meio da corrida esvazia o buffer do TM, que relocaliza o caminhão e, perto de uma junção, pode pegar outra faixa. O caminho não tem pontos dentro das junções: numa bifurcação, o TM escolhe o ramo cuja saída está na via do próximo ponto, e um ponto ainda dentro da junção o fazia escolher pela distância (na VM, ele pegou o conector 306 em vez do 305 a 751 m da volta). Saindo da imobilidade, o governador segura a referência colada na velocidade só por 1,5 s (`governador.soltar_freio_s`): depois disso ela volta a crescer, porque o TM quase não acelera um caminhão pedindo +1 km/h (na VM, com os agentes, ele rastejava a 1 km/h por minutos). Além disso, quando o governador quer andar, o TM do CARLA recebe pelo menos 5 km/h (`carla.velocidade_minima_tm_kmh`): o PID dele usa o erro normalizado pelo alvo e, com alvos de 1 a 3 km/h, alterna acelerador e freio sem sair do lugar (na corrida `20261011_121132_agentes`, o diagnóstico mostra 2 km/h medidos, 2,8 km/h pedidos, alvo de 23 km/h e 119 trocas de sinal da aceleração em 10 m). Um vigia encerra o processo com aviso se um tick não voltar em 90 s (o TM síncrono roda no processo do caminhão e, travado, nem o Ctrl+C funciona).
+- **O mapa vai ao CARLA como é.** Com o antigo `mapa_final.xodr`, o mapa mandado ao CARLA era ajustado (`src/mover/autonomo/xodr_carla.py`; hoje desligado, com as linhas comentadas em `carla_tm.py`, `gravar_video.py` e `config/simulacao.yaml`). As vias do `mapa_final.xodr` têm uma faixa só, de 3,2 m, sem chão ao lado: na VM, o caminhão cortou uma curva, ficou com as rodas fora da malha (parado a 82,5 m, z = -0,11 m) e o Traffic Manager acabou removendo-o. Antes de gerar o mundo, cada via ganha um acostamento de 2 m de cada lado (`carla.opendrive.acostamento_m`, faixa que o TM não usa), e as junções de passagem com conector menor que 1 m viram ligação direta via -> via (`colapsar_conectores_m`). Na largada, o log confere a topologia do CARLA ao longo da rota. Se o caminhão ficar parado 30 s com alvo acima de 3,6 km/h, a corrida termina como `preso`; se ficar mais de 12 m longe da rota por 3 s, como `fora_da_rota` (a 4 m o log já avisa); se o CARLA o remover, como `removido`; se o CARLA não responder ao tick, como `sem_resposta`. Em todos os casos ela grava o que andou e o log diz a posição. O caminho passado ao Traffic Manager (`set_path`) vai de uma vez só, da largada até 30 m depois da chegada: renová-lo no meio da corrida esvazia o buffer do TM, que relocaliza o caminhão e, perto de uma junção, pode pegar outra faixa. O caminho não tem pontos dentro das junções: numa bifurcação, o TM escolhe o ramo cuja saída está na via do próximo ponto, e um ponto ainda dentro da junção o fazia escolher pela distância (na VM, ele pegou o conector 306 em vez do 305 a 751 m da volta). Saindo da imobilidade, o governador segura a referência colada na velocidade só por 1,5 s (`governador.soltar_freio_s`): depois disso ela volta a crescer, porque o TM quase não acelera um caminhão pedindo +1 km/h (na VM, com os agentes, ele rastejava a 1 km/h por minutos). Além disso, quando o governador quer andar, o TM do CARLA recebe pelo menos 5 km/h (`carla.velocidade_minima_tm_kmh`): o PID dele usa o erro normalizado pelo alvo e, com alvos de 1 a 3 km/h, alterna acelerador e freio sem sair do lugar (na corrida `20261011_121132_agentes`, o diagnóstico mostra 2 km/h medidos, 2,8 km/h pedidos, alvo de 23 km/h e 119 trocas de sinal da aceleração em 10 m). Um vigia encerra o processo com aviso se um tick não voltar em 90 s (o TM síncrono roda no processo do caminhão e, travado, nem o Ctrl+C funciona).
 - **A latência do LLM depende da máquina.** Sem GPU, o gemma2:2b pode passar do prazo de 6 s, e então as decisões ficam com a regra (o log mostra o motivo).
 
 ## Legado

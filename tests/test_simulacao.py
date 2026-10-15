@@ -660,7 +660,7 @@ def test_juncoes_de_passagem_com_conector_minusculo_viram_ligacao_direta_no_mapa
     assert [c.tag for c in raiz.find("road[@id='257']/lanes/laneSection")] == ["left", "center", "right"]
     ajustado = tmp_path / "mapa_carla.xodr"
     ajustado.write_text(texto, encoding="utf-8")
-    vias = carregar_yaml("config/autonomo.yaml")["gerar_missao"]["rota"]["vias"]
+    vias = [255, 250, 257, 258, 259, 260, 263, 252, 262, 272, 273, 274]  # itinerário da volta no mapa_final.xodr
     tipos = ("driving", "restricted", "bidirectional", "parking")
     antes, _ = rota_do_mapa(ler_xodr(caminho("data/mapas/mapa_final.xodr"), 0.5, tipos), vias)
     depois, _ = rota_do_mapa(ler_xodr(ajustado, 0.5, tipos), vias)

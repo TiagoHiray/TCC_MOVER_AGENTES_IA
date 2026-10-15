@@ -121,18 +121,21 @@ def test_rota_do_mapa_acha_os_conectores_e_fecha_a_volta():
         itinerario_de_faixas(faixas, grafo, [10, 77])
 
 
-def test_plano_do_mapa_real_passa_pelas_lombadas_do_config():
-    if not caminho("data/mapas/mapa_final.xodr").exists():
-        pytest.skip("sem data/mapas/mapa_final.xodr")
-    from mover.autonomo.gerar_missao import gerar
+def test_plano_do_mapa_real_tem_as_lombadas_e_faixas_do_proprio_mapa():
+    cfg_sim = carregar_yaml("config/simulacao.yaml")
+    if not caminho(cfg_sim["mapa"]["arquivo"]).exists():
+        pytest.skip(f"sem {cfg_sim['mapa']['arquivo']}")
+    from mover.autonomo.gerar_missao import gerar, objetos_do_mapa
 
     cfg_auto = carregar_yaml("config/autonomo.yaml")
-    plano = gerar(carregar_yaml("config/simulacao.yaml"), cfg_auto["gerar_missao"])
-    assert 700.0 < plano.comprimento < 860.0 and plano.sentido == "horário"
+    plano = gerar(cfg_sim, cfg_auto["gerar_missao"])
+    assert 700.0 < plano.comprimento < 860.0
     lombadas = [z for z in plano.zonas if z.tipo == "lombada"]
-    assert len(lombadas) == len(cfg_auto["gerar_missao"]["lombadas"])
-    largada = cfg_auto["gerar_missao"]["rota"]["largada"]
-    assert math.hypot(plano.rota.x[0] - largada[0], plano.rota.y[0] - largada[1]) < 3.0
+    no_mapa = objetos_do_mapa(caminho(cfg_sim["mapa"]["arquivo"]), "speedBump")
+    # campus_maua.xodr: 6 lombadas no mapa, 4 no anel R01-R10+R07-R02-R11 (as outras ficam na R03)
+    assert len(no_mapa) == 6 and len(lombadas) == 4 and all("do mapa" in z.origem for z in lombadas)
+    assert sum(z.tipo == "faixa" for z in plano.zonas) >= 4 and [p.id for p in plano.paradas] == ["portao_1"]
+    assert plano.sentido == "anti-horário" and plano.mapa.endswith("campus_maua.xodr")
 
 
 # ---------------------------------------------------------------------------------------------
