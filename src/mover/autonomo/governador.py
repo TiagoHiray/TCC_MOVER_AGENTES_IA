@@ -129,6 +129,10 @@ class Governador:
     def ja_passou(self, chave: str) -> bool:
         return chave in self._feitas
 
+    def acompanhar_comando(self, v_mps: float) -> None:
+        """O piloto recebeu mais que a referência (arrancada no CARLA): a referência continua dali, sem degrau."""
+        self._v_ref = max(self._v_ref, v_mps)
+
     def pode_intervir(self, chave: str) -> bool:
         """Uma intervenção para o elemento ainda muda algo: ele não passou, o caminhão não está parado
         nele e o piloto ainda não começou a frenagem bruta (uma decisão atrasada não interrompe a frenagem)."""

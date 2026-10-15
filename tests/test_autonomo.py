@@ -198,6 +198,9 @@ def test_tm_do_carla_nunca_recebe_um_alvo_minusculo_quando_o_governador_quer_and
     andando = [l for l in res.linhas if l["modo_tick"] != "parado" and (l["v_alvo_kmh"] or 0.0) > 5.0
                and l["v_desejada_kmh"] > 0.05 * 3.6]  # pedir zero (frear) continua valendo
     assert andando and min(l["v_desejada_kmh"] for l in andando) >= 5.0 - 1e-9
+    # sem degrau no pedido ao sair da arrancada (no CARLA, o degrau virava freio cheio na saída das lombadas)
+    pedidos = [l["v_desejada_kmh"] for l in res.linhas if l["modo_tick"] != "parado"]
+    assert max(a - b for a, b in zip(pedidos, pedidos[1:])) < 1.0
     assert m.v_min_comando("carla") == pytest.approx(5.0 / 3.6) and m.v_min_comando("substituto") == 0.0
 
 
