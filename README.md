@@ -1,662 +1,376 @@
 # MOVER: gêmeo digital do caminhão autônomo com camada agêntica
 
-O caminhão já é autônomo: ele dá a volta no campus do IMT sozinho, no CARLA, guiado pelo piloto
-automático do simulador (o Traffic Manager). Como todo carro autônomo, ele decide antes de agir. A
-camada agêntica entra entre a decisão e a execução, sempre com os dados da corrida atual:
+Um caminhão autônomo dá a volta no campus do IMT, no CARLA, guiado pelo piloto automático do
+simulador (Traffic Manager, TM). A cada 10 s, ele monta o plano do trecho seguinte a partir do
+estado medido naquele instante e manda esse plano por HTTP a uma camada de agentes. Quando o plano
+tem uma frenagem ou arrancada brusca, um modelo de ML propõe quanto suavizar, o modelo do caminhão
+confere a proposta e um LLM local (gemma2:2b no Ollama) aprova e escreve o log. O caminhão então
+executa o plano alterado.
 
-**1. O caminhão planeja (X).** A cada 10 s, a partir do estado medido naquele instante (posição, velocidade e aceleração no CARLA), o caminhão monta o plano do trecho seguinte: a velocidade desejada que vai pedir ao piloto em cada zona, a velocidade e a aceleração que isso vai gerar, as manobras à frente (no CARLA, as do próprio Traffic Manager, por `get_all_actions`) e as frenagens e arrancadas bruscas desse plano. Ele manda esse plano aos agentes antes de executá-lo.
-
-**2. Os agentes alteram o plano.** Quando o plano tem uma decisão brusca, um modelo de ML (floresta aleatória treinada com milhares de situações simuladas) propõe quanto suavizar: com que desaceleração frear antes, com que aceleração retomar e até que velocidade. O modelo do caminhão simula a proposta e as opções fixas, a regra confere e o LLM local (gemma2:2b no Ollama) aprova ou troca a alteração e escreve o log em linguagem natural.
-
-**3. O caminhão executa o plano alterado (Y).** A alteração muda de verdade a velocidade desejada mandada ao piloto automático, a cada tick. Enquanto anda, o caminhão já planeja o trecho seguinte e o manda aos agentes, e assim por diante: há sempre um buffer de 10 s entre a decisão e a execução.
-
-O caminhão e os agentes conversam por HTTP, como um caminhão real ligado a um servidor: o lado do CARLA manda o plano (`POST /agentes/plano`) e busca as alterações (`GET /agentes/decisoes`); a telemetria e as decisões aplicadas vão ao painel também por HTTP. Os dois lados podem ficar em máquinas diferentes (seção "Comunicação por HTTP").
-
-A página tem quatro painéis: a simulação, o dashboard com gráficos que se montam ao vivo e o
-consumo comparado com o plano sem agentes, o log e o chat. Um benchmark mede o efeito prático em
-N voltas sem e N voltas com os agentes (diesel, R$, CO2, eventos bruscos e tempo, extrapolados
-para 100 voltas). Um script grava a corrida em MP4.
+O projeto também tem um painel ao vivo (simulação, gráficos, log e chat), um benchmark com N voltas
+sem e N voltas com os agentes, e a gravação da corrida em MP4.
 
 ```
-mapa do CARLA (campus_maua.xodr) + config
-   |  rota, lombadas e faixas de pedestre (objetos do mapa), curvas e portão
-   v
-plano de missão (config/missao.yaml)
-   |
-   v
-caminhão autônomo no CARLA (Traffic Manager) <----------------+
-   |  a cada 10 s, a partir do estado medido agora: o plano    |
-   |  dos 10 s seguintes (velocidade, aceleração, manobras     |
-   |  e decisões bruscas), ainda não executado                 |
-   v  HTTP: POST /agentes/plano                                |
-camada agêntica (servidor)                                     |
-   especialista de jerk: aponta as decisões bruscas do plano   |
-   especialista de ML: propõe quanto suavizar cada uma         |
-   modelo do caminhão: simula a proposta e as opções fixas     |
-   regra + LLM (gemma2:2b): aprova e escreve o log             |
-   |                                                           |
-   +--- HTTP: GET /agentes/decisoes -> velocidade desejada ----+
-   |
-   v
-painel ao vivo (gráficos, consumo x plano sem agentes, log e chat),
-benchmark (N voltas sem x N com) e vídeo MP4
+mapa do CARLA (campus_maua.xodr) -> plano de missão (config/missao.yaml)
+          |
+          v
+caminhão no CARLA (TM) --- a cada 10 s: plano dos 10 s seguintes ---> camada agêntica (HTTP)
+          ^                                                             jerk: acha as decisões bruscas
+          |                                                             ML: propõe a suavização
+          |                                                             modelo do caminhão: simula as opções
+          +------------- velocidade desejada alterada <---------------- regra + LLM: aprovam e escrevem o log
 ```
 
-> Nenhum dado gravado no mundo real entra no projeto, e nenhuma corrida anterior entra no laço
-> de decisão: o plano que os agentes alteram é o da corrida atual. A rota sai do mapa do CARLA. O
-> código antigo, da gravação feita com o celular, ficou no repositório só como legado (seção
-> Legado, no fim).
+Nenhum dado gravado no mundo real entra no laço. A rota sai do mapa do CARLA, e o plano que os
+agentes alteram é sempre o da corrida atual.
 
 ## Resultado no CARLA
 
-Benchmark final, no CARLA 0.9.16, no mapa `campus_maua.xodr` (volta de 783 m, sentido anti-horário),
-com o LLM gemma2:2b e o modelo de ML: 3 voltas sem agentes e 3 voltas com agentes. Os arquivos estão em
-[data/benchmark/20261015_004001](data/benchmark/20261015_004001).
+O benchmark rodou no CARLA 0.9.16, no mapa `campus_maua.xodr` (volta de 783 m, sentido
+anti-horário), com o gemma2:2b e o modelo de ML. Foram 3 voltas sem agentes e 3 voltas com agentes,
+na mesma execução. Os arquivos estão em
+[`data/benchmark/20261015_004001`](data/benchmark/20261015_004001).
+
+As métricas foram recalculadas em 17/10/2026 a partir das telemetrias salvas, com o medidor de
+consumo unificado. Veja a seção "Como as métricas são calculadas".
 
 | Por volta | Sem agentes | Com agentes | Diferença |
 |---|---|---|---|
-| Diesel | 357,0 mL | 260,8 mL | **−26,9 %** |
-| Eventos bruscos (jerk de 2,5 m/s³ ou mais) | 24,3 | 7,3 | **−69,9 %** |
-| Eventos críticos (jerk de 5 m/s³ ou mais) | 22,3 | 4,7 | **−79,1 %** |
-| Jerk máximo | 65,3 m/s³ | 24,4 m/s³ | −62,7 % |
-| Energia dissipada nos freios | 646 Wh | 359 Wh | −44,5 % |
+| Diesel | 336,2 mL | 267,4 mL | **−20,5 %** |
+| Eventos bruscos (jerk ≥ 2,5 m/s³) | 24,3 | 7,3 | **−69,9 %** |
+| Eventos críticos (jerk ≥ 5 m/s³) | 22,3 | 4,7 | **−79,1 %** |
+| Pior desaceleração | −15,1 m/s² | −3,0 m/s² | |
+| Energia dissipada nos freios | 586 Wh | 352 Wh | −40,0 % |
 | Tempo | 166,2 s | 189,4 s | +14,0 % |
 
-Em 100 voltas: 35,2 L contra 25,9 L de diesel (9,4 L, R$ 56,13 e 25,1 kg de CO2 a menos) e 2304
-contra 604 eventos bruscos, com 38,5 min a mais.
+Extrapolando para 100 voltas, são 33,3 L contra 26,5 L de diesel: 6,8 L, R$ 40,59 e 18,1 kg de CO2
+a menos. Os eventos bruscos caem de 2.304 para 604, ao custo de 38,5 min a mais.
 
 ![Velocidade na 1ª volta e diesel por volta, sem e com agentes](data/benchmark/20261015_004001/comparativo.png)
 
-Como ler o resultado:
+Como ler esses números:
 
-- **Reprodutível.** A bateria sem agentes saiu idêntica em execuções seguidas (no mapa anterior, duas execuções iguais até a terceira casa), e a corrida ao vivo com o painel e o LLM repetiu a volta de conferência (190,6 s, 265 mL, 4 + 6 eventos).
-- **O ganho vem do modelo de ML conferido pelo modelo do caminhão e pela regra.** O LLM decidiu 29 das 31 vezes (3,6 a 5,1 s cada, dentro do prazo de 6 s) e escolheu a mesma alteração que a regra recomendava; ele explica a decisão e não consegue escolher algo menos seguro. Nos benchmarks do mapa anterior, os números foram idênticos com 4, 24 ou 27 decisões do LLM.
-- **Os eventos críticos que sobram vêm do controle do Traffic Manager**, não das decisões: acelerador cheio na arrancada (largada e saída do portão, que fica 3 m antes da lombada 2), freio cheio nos últimos km/h de uma parada e um degrau de freio no começo das frenagens a ~16 km/h. O diagnóstico (seção 6) lista cada um.
-- **O custo é tempo:** frear antes e retomar com calma alonga a volta em ~23 s.
+- **De onde vem o ganho.** Com agentes, o caminhão freia antes e retoma com calma. Entre as zonas,
+  ele fica num teto de 18 a 20 km/h: na volta com agentes, nunca passou de 20 km/h, e sem agentes
+  chegou a 28,6 km/h. O custo é tempo, ~23 s a mais por volta.
+- **Quem decide.** A proposta do ML, conferida pelo modelo do caminhão e pela regra, foi aplicada
+  nas 31 decisões. O LLM aprovou as 31, em 3,6 a 5,1 s cada (o prazo é de 6 s), e escreveu os logs.
+  Em 2 delas, a guarda recusou o texto do LLM, que citou um número sem respaldo, e valeu o texto da
+  regra. O LLM não mudou nenhuma alteração.
+- **Eventos que sobram.** Os eventos críticos que restam com agentes vêm do controle do TM:
+  - acelerador cheio nas arrancadas, na largada e na saída do portão (que fica 3 m antes da
+    lombada 2);
+  - freio cheio nos últimos km/h das paradas;
+  - um degrau de freio no começo de algumas frenagens, a ~16 km/h.
 
-## Comandos de cada tarefa
+  O `python -m mover.autonomo.diagnostico` lista cada um.
+- **Repetibilidade.** A bateria sem agentes sai idêntica entre execuções. A bateria com agentes
+  varia pouco, porque o plano usa as ações do TM: em duas execuções no mapa anterior, o diesel
+  diferiu 0,15 ponto percentual.
+- **Robustez.** Com outras suavizações razoáveis da velocidade, a economia de diesel fica entre
+  −16 % e −23 %. A contagem de eventos depende da suavização de 1,5 Hz da aceleração: com 2 Hz, a
+  queda é de −36 %. Os eventos críticos, a pior desaceleração e o tempo de freio cheio caem em
+  qualquer caso.
 
-Os comandos `python -m ...` rodam a partir da pasta `src/`. O script `rodar_gemeo.sh` roda da raiz
-do repositório (no Windows, pelo Git Bash) e faz o mesmo, conferindo antes o CARLA e o Ollama.
+## Instalação (uma vez)
 
-| Tarefa | Com o script | Direto no Python (pasta `src/`) |
-|---|---|---|
-| Coletar os dados de uma volta no CARLA (sem o painel) | `./scripts/rodar_gemeo.sh coleta` | `python -m mover.autonomo.dirigir --sem-painel` |
-| Ver a volta com os agentes no CARLA, com o painel | `./scripts/rodar_gemeo.sh visual` | `python -m mover.autonomo.dirigir` |
-| Gravar a volta em vídeo MP4 | `./scripts/rodar_gemeo.sh gravar` | `python -m mover.autonomo.dirigir --gravar --sair-no-fim` e depois `python -m mover.video.gravar_video` |
-| Interface no localhost, sem o CARLA | `./scripts/rodar_gemeo.sh painel` | `python -m mover.autonomo.dirigir --sem-carla` |
-| Benchmark sem e com os agentes | `./scripts/rodar_gemeo.sh benchmark --voltas 3` | `python -m mover.autonomo.benchmark --voltas 3` |
-| Diagnóstico de uma corrida (trechos lentos e eventos bruscos) | — | `python -m mover.autonomo.diagnostico` |
-| Servidor do painel e dos agentes à parte | `./scripts/rodar_gemeo.sh servidor` | `python -m mover.servidor.rodar_servidor` |
-| Treinar de novo o modelo de ML | `./scripts/rodar_gemeo.sh treinar` | `python -m mover.agentes.suavizador_ml` |
-| Análise de uma corrida pela camada de logs, sem o CARLA | `./scripts/rodar_gemeo.sh analise` | `python -m mover.agentes.rodar_agentes` |
-
-A ordem é: abrir o CARLA (seção 1) e rodar a tarefa. Não há coleta prévia: cada corrida grava os
-próprios dados. Na primeira corrida com agentes, o modelo de ML é treinado sozinho (uma vez, ~1 a 2
-min; seção 7). As seções 1 a 8 explicam cada tarefa. Antes, faça a instalação abaixo uma vez.
-
-### Sequência usada na VM para os números do TCC
-
-Dois terminais, **os dois na mesma pasta do repositório** (o servidor lê o `config/missao.yaml` da
-pasta de onde sobe e recusa um caminhão com outro plano de missão, com HTTP 409):
-
-```bash
-# Terminal A: servidor do painel e dos agentes (fica no ar)
-cd src
-python -m mover.servidor.rodar_servidor --depurar
-
-# Terminal B: o caminhão no CARLA
-cd src
-python -m mover.autonomo.dirigir --sem-painel --sem-render --sem-espera --provedor falso   # volta de conferência
-python -m mover.autonomo.diagnostico
-python -m mover.autonomo.benchmark --voltas 3 --servidor http://127.0.0.1:8000 --provedor ollama
-python -m mover.autonomo.diagnostico
-python -m mover.autonomo.dirigir --servidor http://127.0.0.1:8000 --provedor ollama --camera perseguicao   # ao vivo, com o painel
-```
-
-Depois de um `git pull` que mude o plano de missão, reinicie o servidor do Terminal A. O passo a passo
-da VM está em `EXECUCAO_VM.md`.
-
-## Instalação (uma vez, no Windows como no setup do time)
-
-### Ambiente Python e CARLA
+No Windows, como no setup do time (Python 3.12):
 
 ```bash
 cd C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA
 py -3.12 -m venv env_carla
 env_carla\Scripts\activate
 pip install -r requirements.txt
-```
-
-O `requirements.txt` já traz o cliente do CARLA (`carla==0.9.16`, do PyPI), que precisa ser da mesma versão do simulador. O PyPI tem esse pacote para o Python 3.10, 3.11 e 3.12. Outra forma é instalar o arquivo que vem com o simulador: `pip install C:\CARLA_0.9.16\PythonAPI\carla\dist\carla-0.9.16-cp312-cp312-win_amd64.whl`.
-
-### LLM local (Ollama + gemma2:2b)
-
-```bash
 powershell -ExecutionPolicy Bypass -File scripts\preparar_ollama.ps1
 ```
 
-O script instala o Ollama pelo winget (se faltar), liga o serviço e baixa o `gemma2:2b`. Esse é o
-modelo escolhido no benchmark do artigo: 25 % de alucinação e ~59 tokens/s. Depois ele mede a
-latência e grava `MOVER_LLM_PROVEDOR=ollama` e `MOVER_LLM_MODELO=gemma2:2b` no `.env` da raiz (o
-modelo do arquivo está em `.env.example`). No Linux ou macOS, use `bash scripts/preparar_ollama.sh`;
-no Git Bash, `./scripts/rodar_gemeo.sh ollama`. Outro modelo:
-`scripts\preparar_ollama.ps1 -Modelo qwen2.5:1.5b`.
+- **CARLA.** O `requirements.txt` já traz o cliente `carla==0.9.16`, que existe no PyPI para o
+  Python 3.10 a 3.12 e tem que ser da mesma versão do simulador.
+- **LLM.** O script do Ollama instala e liga o Ollama, baixa o `gemma2:2b`, mede a latência e grava
+  `MOVER_LLM_PROVEDOR` e `MOVER_LLM_MODELO` no `.env`. O modelo do `.env` está no `.env.example`.
+- **Linux.** Crie o ambiente com `python3 -m venv .venv` e
+  `.venv/bin/pip install -r requirements.txt`, e rode `bash scripts/preparar_ollama.sh`.
 
-O piloto aquece o modelo antes da largada, porque a primeira chamada carrega o modelo na memória.
-Cada decisão tem prazo de 6 s (`decisao.prazo_llm_s`). Se o LLM atrasar, falhar, escolher uma
-opção que não existe ou citar um número sem respaldo, vale a decisão da regra, e o log registra o
-motivo.
+## Como rodar
 
-### O script rodar_gemeo.sh
-
-No Windows ele roda no Git Bash, que vem com o Git for Windows. Ele acha sozinho o Python do `env_carla` (ou do `.venv`), confere se o CARLA e o Ollama estão no ar e entra na pasta `src/`. Se o CARLA estiver fechado e `CARLA_ROOT` apontar para a pasta dele (no Windows, `C:\CARLA_0.9.16` é achado sozinho), o script abre o CARLA com janela e espera ele responder.
-
-| Modo | O que faz |
-|---|---|
-| `coleta` | uma volta com os agentes no CARLA, sem o painel: grava a telemetria, as decisões e o plano de cada bloco |
-| `visual` (padrão) | a volta com os agentes no CARLA, vendo o caminhão, com o painel no navegador |
-| `gravar` | grava a volta com os agentes no CARLA e gera o vídeo MP4 |
-| `video` | refaz o MP4 da última corrida gravada |
-| `painel` | o painel em http://127.0.0.1:8000/ com o simulador substituto, sem o CARLA |
-| `servidor` | só o servidor do painel, para várias corridas |
-| `benchmark` | N voltas sem e N com os agentes |
-| `treinar` | treina de novo o modelo de ML que propõe a suavização |
-| `analise` | a camada de logs e o especialista de ML dos logs sobre a corrida mais recente, sem o CARLA |
-| `ollama` | instala e liga o Ollama e baixa o gemma2:2b |
-| `carla` | só abre o CARLA com janela |
-| `testes` | roda os testes |
-| `ajuda` | mostra os modos e as variáveis |
-
-Opções a mais vão direto para o comando Python: `./scripts/rodar_gemeo.sh visual --voltas 2 --sem-llm` ou `./scripts/rodar_gemeo.sh coleta --sem-agentes`. Variáveis de ambiente, todas opcionais:
-
-- `CARLA_ROOT`: pasta do CARLA, para o script abri-lo (ex.: `CARLA_ROOT=/c/CARLA_0.9.16`);
-- `CARLA_QUALIDADE`: `Low` ou `Epic` (padrão: `Epic` em `gravar` e `video`, `Low` no resto);
-- `CARLA_HOST` e `CARLA_PORTA`: padrão `localhost` e `2000`, os mesmos do `config/simulacao.yaml`;
-- `PYTHON`: outro Python;
-- `OLLAMA_HOST`: padrão `http://localhost:11434`;
-- `MOVER_SECO=1`: só mostra os comandos, sem rodar.
-
-Se o Git não marcar o script como executável, rode `bash scripts/rodar_gemeo.sh visual` ou, uma vez, `git update-index --chmod=+x scripts/rodar_gemeo.sh`. O `.gitattributes` mantém o fim de linha LF nos `.sh`, sem o qual o bash não roda o script.
-
-## 1. Abrir o CARLA com janela
-
-O setup do time abria o CARLA com `-RenderOffScreen`. Com essa opção não há janela, então não dá
-para ver o mapa nem o caminhão. Para ver a corrida, abra assim:
+Primeiro, abra o CARLA. Para ver a corrida, abra com janela:
 
 ```bash
 C:\CARLA_0.9.16\CarlaUE4.exe -quality-level=Low -world-port=2000
 ```
 
-Para gravar o vídeo, troque por `-quality-level=Epic`: é essa opção que define a qualidade da imagem das câmeras. Com o script, `./scripts/rodar_gemeo.sh carla` abre o CARLA do mesmo jeito.
+Para gravar vídeo, use `-quality-level=Epic`. No benchmark, pode abrir sem janela:
+`-RenderOffScreen -quality-level=Low -nosound`.
 
-Os comandos geram o mundo a partir de `data/mapas/campus_maua.xodr`, sem alteração, e criam o caminhão `vehicle.carlamotors.european_hgv` na largada. O mapa tem elevação real (as vias ficam a ~750 m de altitude), acostamentos, calçadas, lombadas e faixas de pedestre. Se o pacote do mapa estiver instalado no CARLA (com prédios), `carla.mapa_carla: campus_maua` no `config/simulacao.yaml` o carrega pelo nome em vez de gerar o mundo do `.xodr`. Na largada, o log confere se a rota tem continuação em todas as faixas do CARLA ("Topologia do CARLA"). A câmera da janela (spectator) passa a seguir o caminhão. Use `--camera cima` para ver de cima ou `--camera livre` para mexer a câmera você mesmo.
+Os comandos `python -m ...` rodam da pasta `src/`. O `scripts/rodar_gemeo.sh` roda da raiz (no
+Windows, pelo Git Bash): ele confere o CARLA e o Ollama antes e repassa as opções extras ao Python.
 
-## 2. Coletar os dados de uma volta no CARLA
+| Tarefa | Python (pasta `src/`) | Script (raiz) |
+|---|---|---|
+| Volta com agentes no CARLA, com o painel em http://127.0.0.1:8000/ | `python -m mover.autonomo.dirigir` | `./scripts/rodar_gemeo.sh visual` |
+| Só coletar os dados de uma volta (sem painel) | `python -m mover.autonomo.dirigir --sem-painel` | `./scripts/rodar_gemeo.sh coleta` |
+| Painel sem o CARLA (simulador substituto) | `python -m mover.autonomo.dirigir --sem-carla --provedor falso` | `./scripts/rodar_gemeo.sh painel` |
+| Benchmark: N voltas sem e N com agentes | `python -m mover.autonomo.benchmark --voltas 3` | `./scripts/rodar_gemeo.sh benchmark --voltas 3` |
+| Refazer as métricas de um benchmark salvo | `python -m mover.autonomo.benchmark --recalcular ../data/benchmark/<data>` | — |
+| Diagnóstico de uma corrida (trechos lentos e eventos bruscos) | `python -m mover.autonomo.diagnostico [telemetria.csv]` | — |
+| Gravar a volta em MP4 | `python -m mover.autonomo.dirigir --gravar --sair-no-fim` e `python -m mover.video.gravar_video` | `./scripts/rodar_gemeo.sh gravar` |
+| Servidor do painel e dos agentes à parte | `python -m mover.servidor.rodar_servidor` | `./scripts/rodar_gemeo.sh servidor` |
+| Treinar de novo o modelo de ML | `python -m mover.agentes.suavizador_ml` | `./scripts/rodar_gemeo.sh treinar` |
+| Análise de uma corrida pela camada de logs | `python -m mover.agentes.rodar_agentes` | `./scripts/rodar_gemeo.sh analise` |
+| Testes (da raiz) | `python -m pytest tests -q` | `./scripts/rodar_gemeo.sh testes` |
 
-Com o CARLA aberto:
-
-```bash
-cd src
-python -m mover.autonomo.dirigir --sem-painel
-```
-
-O caminhão sai parado da largada e dá a volta com os agentes, sem abrir a página. Os dados saem desta corrida: a cada 10 s, o caminhão manda aos agentes o plano do trecho seguinte, e os agentes o alteram antes de ele ser executado. Para ter também os dados do caminhão sozinho, rode de novo com `--sem-agentes`. Com o script: `./scripts/rodar_gemeo.sh coleta` (ou `coleta --sem-agentes`).
-
-| Opção | O que faz |
-|---|---|
-| `--voltas 3` | três voltas seguidas (o padrão vem de `missao.voltas` no `config/autonomo.yaml`) |
-| `--sem-agentes` | o caminhão sozinho, executando o próprio plano sem alteração |
-| `--sem-ml` | os agentes só com as opções fixas de suavização, sem o modelo de ML |
-| `--sem-llm` | os agentes decidem só pela regra, sem o Ollama |
-| `--sem-render` | o CARLA não desenha a cena (mais rápido) |
-| `--sem-espera` | não segue o relógio: o mais rápido possível, e a simulação espera cada decisão |
-| `--sem-carla` | simulador substituto, só para testar sem o CARLA |
-
-Cada corrida fica em `data/autonomo/corridas/<data>_<modo>/`, com o modo `agentes` ou `bruto` (o caminhão sozinho):
-
-- `telemetria.csv`: uma linha por tick do simulador (20 Hz);
-- `decisoes.jsonl`: uma linha por decisão dos agentes, com o plano que o caminhão mandou (velocidade, aceleração e velocidade desejada a 2 Hz, decisões bruscas e manobras), as propostas do ML, as alterações simuladas, a escolhida e o texto do log;
-- `resumo.json`: tempo, distância, diesel, custo, CO2, eventos bruscos e jerk, da corrida e de cada volta;
-- `linha_de_base.json`: o plano do caminhão sem agentes, previsto pelo modelo do caminhão (consumo e eventos pela distância), para o painel e o vídeo compararem.
-
-Colunas do `telemetria.csv`:
-
-- tempo: `frame`, `sim_time`, `t` e `hora_local`;
-- posição no plano local do mapa: `x`, `y`, `z` e `rumo_graus`; no CARLA, também `x_carla`, `y_carla`, `yaw_carla`, `pitch_carla` e `roll_carla`;
-- movimento: `speed_mps`, `speed_kmh`, `acc_long`, `acc_lat`, `yaw_rate_dps` e `rampa`;
-- comandos do piloto automático: `throttle`, `brake`, `steer`, `gear` e `rpm` (o `rpm` só com `telemetria_motor: true` no `config/autonomo.yaml`);
-- rota: `d` e `odom_m` (distância percorrida), `s` (posição na volta), `volta` e, no CARLA, `desvio_m` (distância lateral até a rota);
-- velocidades: `v_desejada_kmh` (a mandada ao Traffic Manager), `v_limite_kmh` (a do plano), `v_alvo_kmh` e `limitado_por` (a zona ou parada que está limitando);
-- modo: `modo`, `bloco` e `modo_tick` (`bruto` quando o piloto segue o degrau do plano, `suave` quando vale uma alteração, `parado`);
-- consumo acumulado: `combustivel_ml`, `custo_r` e `co2_g`;
-- `fonte`: `carla` ou `substituto`.
-
-O terminal mostra cada decisão. No CARLA, com o LLM, uma delas foi:
-
-```
-[ 133.6 s] decisão do bloco 14: ajuste do ML (LLM, 3.4 s) - A opção 'ml'
-foi escolhida, com a proposta do ML para a lombada 4: frear com até
-0,6 m/s² e retomar com até 0,9 m/s², até 18 km/h. O ML suavizou a
-frenagem e a aceleração, com 0 eventos bruscos e 19 mL a menos (+2,6 s).
-```
-
-## 3. Ver a volta com os agentes no CARLA
-
-Com o CARLA aberto com janela:
-
-```bash
-cd src
-python -m mover.autonomo.dirigir
-```
-
-O comando dá a volta com os agentes. A câmera da janela do CARLA segue o caminhão, e o comando também sobe o painel e abre http://127.0.0.1:8000/ no navegador. Com o script: `./scripts/rodar_gemeo.sh visual`. Outras opções:
-
-| Comando | O que faz |
-|---|---|
-| `python -m mover.autonomo.dirigir --voltas 3` | três voltas seguidas |
-| `python -m mover.autonomo.dirigir --sem-agentes` | o caminhão sozinho, para comparar no painel |
-| `python -m mover.autonomo.dirigir --sem-ml` | os agentes sem o modelo de ML (só as opções fixas) |
-| `python -m mover.autonomo.dirigir --sem-llm` | os agentes decidem só pela regra |
-| `python -m mover.autonomo.dirigir --camera cima` | a janela do CARLA vê de cima |
-| `python -m mover.autonomo.dirigir --fator-tempo 2` | duas vezes mais rápido que o real |
-| `python -m mover.autonomo.dirigir --provedor falso` | sem LLM instalado (texto-modelo) |
-| `python -m mover.autonomo.dirigir --sair-no-fim` | fecha o painel quando a volta acaba |
-| `python -m mover.autonomo.dirigir --sem-painel` | sem a página (só grava os dados da corrida; os agentes sobem num servidor só desta corrida, numa porta livre) |
-| `python -m mover.autonomo.dirigir --servidor http://<ip>:8000` | painel e agentes num servidor já no ar, em outra máquina ou terminal |
-
-A corrida grava os mesmos arquivos da seção 2. No fim, a página e o chat continuam no ar até o Ctrl+C.
-
-## 4. Gravar a volta em vídeo
-
-Com o CARLA aberto com `-quality-level=Epic`:
-
-```bash
-cd src
-python -m mover.autonomo.dirigir --gravar --sair-no-fim
-python -m mover.video.gravar_video
-```
-
-O primeiro comando dá a volta com os agentes e liga o gravador do CARLA (`gravacao_carla.log`, na pasta da corrida). O segundo reproduz essa gravação no CARLA em modo síncrono, com passo de 1/30 s, e segue o caminhão com uma câmera de perseguição de 1920 x 1080. Sem `--corrida`, ele usa a última corrida gravada. O vídeo sai em `data/autonomo/corridas/<data>_agentes/video.mp4`. Com o script, `./scripts/rodar_gemeo.sh gravar` faz os dois passos.
-
-O HUD do vídeo mostra:
-
-- a velocidade, com a desejada e o limite;
-- a aceleração;
-- o diesel e o custo, comparados com o plano sem agentes (previsto) na mesma distância;
-- a decisão dos agentes no momento;
-- um minimapa com o rastro.
-
-O ffmpeg do `imageio-ffmpeg` codifica em H.264 (libx264, CRF 18, yuv420p). Cada quadro é renderizado pelo CARLA, então o vídeo demora mais que a corrida, conforme a GPU. Opções do `gravar_video` (no script, `./scripts/rodar_gemeo.sh video ...`):
+Opções do `dirigir`:
 
 | Opção | O que faz |
 |---|---|
-| `--camera frontal` | câmera no capô (também há `alto`) |
-| `--corrida ../data/autonomo/corridas/<id>` | outra corrida, em vez da última gravada |
-| `--modo poses` | se a reprodução falhar, impõe as poses gravadas na telemetria |
-| `--inicio 30 --duracao 60` | só um trecho da corrida |
-| `--sem-hud` | vídeo limpo, sem o HUD |
-| `--teste-hud hud.png` | desenha um quadro do HUD sem o CARLA |
+| `--voltas N` | N voltas seguidas |
+| `--sem-agentes` | o caminhão sozinho, executando o próprio plano |
+| `--sem-ml` | os agentes só com as opções fixas |
+| `--sem-llm` | os agentes decidem só pela regra |
+| `--provedor falso` | sem LLM instalado (usa um texto-modelo) |
+| `--sem-render` | o CARLA não desenha a cena |
+| `--sem-espera` | não segue o relógio |
+| `--servidor http://<ip>:8000` | usa um servidor de agentes já no ar |
+| `--camera cima` ou `--camera livre` | muda a câmera da janela do CARLA |
+| `--fator-tempo 2` | acelera o relógio |
 
-## 5. Interface no localhost
+No `gravar_video`, as opções são `--camera frontal`, `--corrida <pasta>`, `--modo poses` (se a
+reprodução do gravador falhar), `--inicio 30 --duracao 60` e `--sem-hud`.
 
-A interface é a página de quatro painéis (simulação, dashboard, log e chat), em http://127.0.0.1:8000/. Ela sobe junto com a corrida:
+Na primeira corrida com agentes, se faltar `data/modelos/suavizador_ml.joblib`, o modelo de ML é
+treinado sozinho (~1 a 2 min).
+
+### Sequência usada na VM para o resultado acima
+
+São dois terminais, os dois na mesma pasta do repositório. O servidor recusa, com HTTP 409, um
+caminhão que tenha outro `config/missao.yaml`.
 
 ```bash
+# Terminal A: servidor do painel e dos agentes
 cd src
-python -m mover.autonomo.dirigir
-python -m mover.autonomo.dirigir --sem-carla
-```
+python -m mover.servidor.rodar_servidor --depurar
 
-O primeiro comando usa o CARLA, e o painel 1 mostra a câmera presa ao caminhão. O segundo roda sem o CARLA, num simulador substituto com o mesmo controle, e o painel 1 mostra o mapa 2D. Ele serve para mostrar a interface em qualquer computador; sem o Ollama, junte `--provedor falso`. Com o script: `./scripts/rodar_gemeo.sh painel`.
-
-Para deixar a página no ar entre várias corridas, suba o servidor à parte e rode as corridas em outro terminal. Elas usam o servidor que já estiver na porta 8000:
-
-```bash
-python -m mover.servidor.rodar_servidor
-```
-
-O que cada painel mostra:
-
-**1. Simulação.** A câmera do CARLA (ou, sem ela, uma visão 2D que segue o caminhão). O HUD traz a velocidade, a desejada e o limite. Um aviso mostra o próximo elemento do plano e o que os agentes decidiram para ele.
-
-**2. Dashboard.** O mapa da volta com as zonas do plano e o rastro que cresce; as zonas com alteração decidida ficam com contorno verde. Os gráficos de velocidade e aceleração se montam ao vivo:
-
-- linha cheia: o que foi medido;
-- linha fina: a velocidade desejada;
-- tracejado cinza: o limite do plano;
-- à frente do instante atual: o plano que o caminhão mandou para o trecho seguinte (vermelho) e o plano com a alteração dos agentes (verde).
-
-O cartão de consumo mostra o diesel e os R$ da corrida e o diesel do plano sem agentes (previsto pelo modelo do caminhão) na mesma distância, com a economia até ali. Ele também mostra as decisões (quantas foram do LLM e a latência), os eventos bruscos medidos (e os previstos sem agentes) e o último benchmark.
-
-**3. Log.** As decisões (a alteração, se foi do LLM ou da regra, o que o plano do caminhão faria, a proposta do ML, o diesel previsto e o tempo extra), os trechos medidos e os problemas. Embaixo, um cartão mostra o próximo trecho.
-
-**4. Chat.** Responde perguntas sobre a corrida, como "quanto diesel os agentes economizaram?", "quais intervenções foram feitas?" e "o que vem pela frente?". As respostas são curtas e citam as entradas (#id). A mesma guarda de números do Supervisor vale aqui.
-
-## 6. Benchmark: N voltas sem agentes e N com agentes
-
-```bash
+# Terminal B: o caminhão
 cd src
-python -m mover.autonomo.benchmark --voltas 3
+python -m mover.autonomo.dirigir --sem-painel --sem-render --sem-espera --provedor falso   # volta de conferência
+python -m mover.autonomo.benchmark --voltas 3 --servidor http://127.0.0.1:8000 --provedor ollama
+python -m mover.autonomo.diagnostico
 ```
 
-Roda no CARLA sem desenhar a cena (`no_rendering_mode`, mais rápido: a janela do CARLA fica preta, e o log
-mostra o fim de cada volta); use `--com-render` para acompanhar. Primeiro vêm N voltas com o caminhão sozinho, executando o próprio plano sem
-alteração. Depois o caminhão volta à largada e faz N voltas com os agentes alterando o plano de
-cada bloco. As duas baterias rodam na mesma execução, e uma não lê a outra. A simulação espera
-cada decisão, então o resultado não depende da velocidade do computador. Saída em
-`data/benchmark/<data>/`:
+O passo a passo completo da VM está em [`EXECUCAO_VM.md`](EXECUCAO_VM.md).
 
-- `resultados.csv`: uma linha por volta de cada bateria, as médias por volta, a diferença (absoluta e em %) e o total em 100 voltas (`--extrapolar`);
-- `resumo.json`: a página mostra o resultado no cartão de consumo;
-- `comparativo.png`: velocidade na 1ª volta e diesel por volta;
-- `telemetria_sem_agentes.csv`, `telemetria_com_agentes.csv` e `decisoes.jsonl`.
+## Saídas
 
-Para ver onde o caminhão andou devagar e o que o governador pedia ali, e cada evento brusco com o contexto:
-
-```bash
-python -m mover.autonomo.diagnostico                       # a telemetria com agentes mais recente
-python -m mover.autonomo.diagnostico ../data/benchmark/<data>/telemetria_sem_agentes.csv
-```
-
-A primeira tabela traz os trechos de 10 m em que o caminhão passou mais tempo: velocidade medida, desejada (a
-mandada ao TM) e alvo do governador, quem limitava, pedais, trocas de sinal da aceleração (oscilação entre
-acelerar e frear) e trocas de marcha. A segunda lista os eventos bruscos (a mesma conta do benchmark), cada
-um com a volta, a posição na volta, o jerk, a velocidade, os pedais máximos em ±1 s, se houve troca de
-marcha, o degrau de altura e de inclinação da pista e quem limitava. Com isso dá para separar condução
-de artefato do mapa ou da física.
-
-As colunas do `resultados.csv` são:
-
-- tempo, distância e velocidade média;
-- diesel (mL), custo (R$) e CO2 (g);
-- eventos bruscos de atenção e críticos;
-- jerk máximo, aceleração mínima e máxima;
-- energia jogada fora nos freios.
-
-A extrapolação para 100 voltas soma a 1ª volta (saída parada), a última (parada final) e 98 vezes
-a média das voltas do meio. Por isso o benchmark pede pelo menos 3 voltas.
-
-O resultado no CARLA está no começo deste README (seção Resultado no CARLA). No simulador substituto
-(`--sem-carla`, só para desenvolvimento), 1 + 1 volta no mapa novo deu:
-
-| Por volta | Sem agentes | Com agentes | Diferença |
-|---|---|---|---|
-| Diesel | 375 mL | 230 mL | −38,5 % |
-| Tempo | 150 s | 190 s | +26,9 % |
-| Eventos bruscos | 26 | 0 | −100 % |
-
-O substituto é o próprio modelo do caminhão, sem o PID do Traffic Manager, por isso zera os eventos. A
-troca entre diesel e tempo depende do valor do tempo (`decisao.valor_tempo_r_h`, R$ 30/h) e do teto de
-tempo extra (`max_tempo_extra_pct`). O modelo de ML aprende com esse mesmo custo: se mudar esses valores,
-treine-o de novo (seção 7).
-
-## 7. O modelo de ML que propõe a suavização
-
-```bash
-cd src
-python -m mover.agentes.suavizador_ml
-```
-
-Não é preciso rodar à mão: se `data/modelos/suavizador_ml.joblib` não existir, a primeira corrida com agentes (ou o benchmark) treina o modelo sozinha, uma vez. Rode o comando para treinar de novo, por exemplo depois de mudar o caminhão, o piloto ou o valor do tempo no `config/autonomo.yaml` (seção `suavizador_ml`). Com o script: `./scripts/rodar_gemeo.sh treinar`. O código está em `src/mover/agentes/suavizador_ml.py`.
-
-Entradas, todas tiradas do plano que o caminhão manda:
-
-- a velocidade agora e a de cruzeiro;
-- o limite da zona, a distância até ela, o comprimento e, se for parada, a duração;
-- a distância até a zona seguinte e o limite dela;
-- a desaceleração e a aceleração que o próprio plano traz.
-
-Saídas: com que desaceleração frear antes da zona (0,4 a 1,8 m/s²), com que aceleração retomar depois (0,3 a 1,2 m/s²) e até que velocidade retomar quando a zona seguinte está perto.
-
-O treino sorteia 2000 situações (uma lombada, curva, faixa de pedestre, parada ou partida à frente, às vezes com outra zona logo depois) e simula cada uma com o modelo do caminhão. Em cada situação, uma busca acha a suavização de menor custo (diesel em R$ + tempo × R$ 30/h) sem eventos bruscos e sem passar de +60 % de tempo no trecho: esse é o rótulo. Uma floresta aleatória do scikit-learn (200 árvores, três saídas) aprende a ir das entradas ao rótulo. O treino separa 20 % das situações para teste e grava as métricas em `data/modelos/suavizador_ml.json`.
-
-No treino de 10/10/2026 (2000 situações, 84 s em 8 núcleos):
-
-- R² no teste: 0,44 na desaceleração, 0,85 na retomada e 0,98 no teto;
-- simuladas nas situações de teste, 100 % das propostas do modelo ficaram sem eventos bruscos, com custo 0,48 % acima do ótimo da busca;
-- a entrada mais importante é a distância até a zona seguinte.
-
-O R² da desaceleração é baixo porque várias desacelerações dão quase o mesmo custo; o que importa é que a proposta não tenha tranco e custe perto do ótimo. Na corrida, toda proposta ainda passa pela conferência do modelo do caminhão antes de valer (seção Como a camada agêntica decide).
-
-## 8. Análise de uma corrida pela camada de logs (sem o CARLA)
-
-```bash
-cd src
-python -m mover.agentes.rodar_agentes
-python -m mover.agentes.treinar_especialista_ml
-```
-
-O primeiro comando roda a camada de logs sobre a corrida mais recente de `data/autonomo/corridas/`, bloco a bloco de 10 s, sem abrir o simulador: o especialista de jerk aponta cada evento brusco medido, o especialista de ML dos logs marca os trechos atípicos e o Supervisor (LLM) escreve os logs. Numa corrida sem agentes, aparecem as decisões bruscas do caminhão sozinho; com agentes, elas devem sumir. O resultado sai em `data/agentes/log_agentes.jsonl`, com um resumo ao lado. Outra corrida: `--corrida ../data/autonomo/corridas/<id>`. Sem o Ollama, junte `--provedor falso`. Com o script: `./scripts/rodar_gemeo.sh analise`.
-
-O segundo comando treina o especialista de ML dos logs (IsolationForest) com a corrida e grava `data/modelos/especialista_ml.joblib`. Não é preciso rodá-lo à mão: a análise treina de novo sozinha quando a corrida muda. É outro modelo, só da camada de logs; quem propõe a suavização é o da seção 7.
+- **Corrida:** fica em `data/autonomo/corridas/<data>_<agentes|bruto>/`, com:
+  - `telemetria.csv`: um tick por linha, a 20 Hz, com posição, velocidade, aceleração, pedais,
+    marcha, velocidade desejada, zona que limita e consumo acumulado;
+  - `decisoes.jsonl`: para cada decisão, o plano enviado, as propostas do ML, as opções simuladas,
+    a escolhida e o log;
+  - `resumo.json` e `linha_de_base.json`: o plano sem agentes previsto, usado pelo painel e pelo
+    vídeo;
+  - `video.mp4`, quando a corrida for gravada.
+- **Benchmark:** fica em `data/benchmark/<data>/`, com:
+  - `resultados.csv`: uma linha por volta, as médias, as diferenças e o total em 100 voltas;
+  - `resumo.json` e `comparativo.png`;
+  - as duas telemetrias e o `decisoes.jsonl`.
 
 ## Como a camada agêntica decide
 
-A camada agêntica trabalha em blocos de 10 s. Antes da largada, o caminhão manda o plano dos dois
-primeiros blocos e a simulação espera a decisão. Depois, a cada bloco k que começa, o caminhão
-monta o plano do bloco k+1 a partir do estado medido naquele instante e o manda por HTTP aos
-agentes, que trabalham no servidor enquanto ele anda:
+1. **O caminhão planeja** (`autonomo/planejador.py`). No começo de cada bloco de 10 s, a partir do
+   estado medido, ele monta o plano do bloco seguinte: a velocidade desejada em cada zona, a
+   velocidade e a aceleração que isso gera (previstas por um modelo do controle do TM), as manobras
+   à frente (`get_all_actions` do TM) e as decisões bruscas, com |jerk| ≥ 2,5 m/s³.
+2. **O ML propõe** (`agentes/suavizador_ml.py`). Uma floresta aleatória (200 árvores, 3 saídas),
+   treinada com 2.000 situações simuladas, propõe três valores para cada zona com decisão brusca:
+   - a desaceleração antes da zona (0,4 a 1,8 m/s²);
+   - a aceleração na retomada (0,3 a 1,2 m/s²);
+   - o teto de velocidade depois da zona.
+3. **O modelo do caminhão simula** (`agentes/decisao.py`). Ele simula o plano sem alteração, a
+   proposta do ML e as opções fixas: econômica (0,6 / 0,5 m/s², teto de 22 km/h), suave
+   (0,8 / 0,6), moderada (1,2 / 0,9) e firme (1,8 / 1,2). Para cada uma, mede diesel, tempo e
+   eventos bruscos.
+4. **A regra escolhe.** Sem decisão brusca no plano, nada muda. Com decisão brusca, vale a proposta
+   do ML, desde que ela não tenha mais eventos que a melhor opção fixa nem passe de +60 % de tempo
+   no trecho. Senão, vale a opção fixa de menor custo (diesel em R$ + tempo × R$ 30/h).
+5. **O LLM supervisiona.** Com prazo de 6 s, o LLM aprova ou troca entre as opções já simuladas e
+   escreve o log. Uma guarda recusa opções com mais eventos bruscos e números sem respaldo. O LLM
+   nunca mexe no pedal.
+6. **O governador executa** (`autonomo/governador.py`). Ele transforma a escolha num envelope de
+   velocidade com jerk limitado a 1,6 m/s³ e manda a velocidade desejada ao TM a cada tick
+   (`set_desired_speed`). Sem agentes, o caminhão segue o plano em degrau e só começa a frear a
+   4,5 m/s² da zona (`governador.desacel_bruta_mps2`).
 
-**1. Plano do caminhão.** Os elementos do plano de missão que ele vai alcançar no bloco k+1 (mais 20 m de margem) e que ainda não têm decisão. Para eles, o caminhão simula o que vai fazer: a velocidade desejada que vai pedir em cada zona e a velocidade e a aceleração que isso gera, pelo modelo do controle do Traffic Manager (o TM não expõe a aceleração que vai aplicar). As manobras à frente vêm do próprio TM (`get_all_actions`); sem o CARLA, da curvatura da rota. O código está em `src/mover/autonomo/planejador.py`.
+O buffer de 10 s é o `decisao.horizonte_s` do `config/autonomo.yaml`. Para diminuí-lo, baixe junto o
+`decisao.prazo_llm_s` e o `blocos.duracao_s` do `config/agentes.yaml`.
 
-**2. Especialista de jerk.** Aponta as decisões bruscas desse plano (|jerk| ≥ 2,5 m/s³ é atenção; ≥ 5 é crítico), com a zona que causa cada uma.
+### Comunicação por HTTP
 
-**3. Especialista de ML.** Para cada zona com decisão brusca, propõe a suavização (seção 7).
-
-**4. Especialista de consumo.** Simula, com o modelo do caminhão (dinâmica + controle no estilo do Traffic Manager), o plano sem alteração, a proposta do ML e as opções fixas, e mede:
-
-- diesel, pelo modelo VT-CPFM;
-- tempo;
-- desaceleração e jerk máximos;
-- eventos bruscos.
-
-**5. Regra.** Sem decisão brusca no plano, nada muda. Com decisão brusca, fica a proposta do ML se ela não tiver mais eventos bruscos que a melhor opção fixa e não passar de +60 % de tempo no trecho; senão, vale a opção fixa de menor custo (diesel em R$ + tempo × R$ 30/h). A recomendação é aplicada na hora.
-
-**6. Supervisor (LLM).** Recebe o plano do caminhão, a proposta do ML, a tabela das alterações simuladas e um rascunho em JSON. Ele aprova ou troca a alteração e escreve o log, com prazo de 6 s:
-
-- se ele trocar a alteração e o caminhão ainda não tiver chegado ao elemento, a escolha dele passa a valer;
-- a guarda recusa alterações com mais eventos bruscos que a da regra e números sem respaldo nos fatos;
-- o LLM nunca mexe no pedal: ele só escolhe entre alterações já simuladas.
-
-| Alteração | Desaceleração antecipada | Retomada | Teto depois do elemento |
-|---|---|---|---|
-| ajuste do ML | a proposta do modelo, zona a zona | a proposta do modelo | a proposta do modelo |
-| econômica | 0,6 m/s² | 0,5 m/s² | 22 km/h |
-| suave | 0,8 m/s² | 0,6 m/s² | — |
-| moderada | 1,2 m/s² | 0,9 m/s² | — |
-| firme | 1,8 m/s² | 1,2 m/s² | — |
-
-A alteração é real. O governador transforma a alteração num envelope de velocidade com jerk
-limitado (1,6 m/s³) e manda a velocidade desejada ao Traffic Manager a cada tick
-(`TrafficManager.set_desired_speed`). Se uma decisão chegar depois de o piloto começar a frenagem
-bruta, ela não é aplicada àquele elemento, e o log mostra "sem tempo de aplicar".
-
-O buffer de 10 s é o `decisao.horizonte_s` do `config/autonomo.yaml`. Para diminuir, baixe junto o
-`decisao.prazo_llm_s` (o LLM precisa responder antes de o bloco acabar) e o `blocos.duracao_s` do
-`config/agentes.yaml`.
-
-Em paralelo, o servidor roda a camada de logs sobre a telemetria medida, bloco a bloco. O que de
-fato aconteceu (trechos e eventos de jerk) vira log em linguagem natural. Com os agentes, esses
-problemas medidos devem quase sumir; sem eles, aparecem todos.
-
-## Comunicação por HTTP
-
-O caminhão (o processo do CARLA: `dirigir` ou `benchmark`) não chama os agentes como função: ele
-manda e recebe os dados por HTTP, como um caminhão real ligado a um servidor. O servidor é o
-mesmo da página (`mover.servidor.app`); a documentação interativa das rotas fica em `/docs`.
+O caminhão (`dirigir` ou `benchmark`) e os agentes conversam como um caminhão real ligado a um
+servidor. O código fica em `autonomo/canal_agentes.py` e em `agentes/servico.py`, e as rotas estão
+documentadas em `/docs`.
 
 | Rota | Quem chama | O que vai e volta |
 |---|---|---|
-| `POST /agentes/sessao` | caminhão, antes da largada | voltas, LLM e ML ligados, provedor e o comprimento da volta (o servidor confere se os dois lados têm o mesmo plano de missão); o servidor monta o Decisor, aquece o LLM e treina o ML se faltar |
-| `POST /agentes/plano` | caminhão, a cada bloco | o plano dos próximos 10 s (`PlanoFuturo.para_json`) e o estado do governador; responde 202, ou as decisões na hora com `"esperar": true` (largada e benchmark) |
-| `GET /agentes/decisoes?desde=N` | caminhão, enquanto espera | as mensagens a partir da N-ésima: `regra` (alteração aplicada na hora), `final` (a do Supervisor, com o log), `vazia` ou `erro` |
-| `DELETE /agentes/sessao` | caminhão, no fim | encerra a sessão dos agentes |
-| `POST /sessao/telemetria` e `/sessao/decisoes` | caminhão, a cada 0,5 s | telemetria medida e decisões aplicadas, para o painel |
+| `POST /agentes/sessao` | o caminhão, antes da largada | voltas, LLM e ML; o servidor confere o plano de missão, aquece o LLM e treina o ML se faltar |
+| `POST /agentes/plano` | o caminhão, a cada bloco | o plano dos próximos 10 s; responde 202, ou as decisões na hora com `"esperar": true` (largada e benchmark) |
+| `GET /agentes/decisoes?desde=N` | o caminhão | as mensagens `regra` (aplicada na hora), `final` (do LLM, com o log), `vazia` ou `erro` |
+| `DELETE /agentes/sessao` | o caminhão, no fim | encerra a sessão |
+| `POST /sessao/telemetria` e `POST /sessao/decisoes` | o caminhão, a cada 0,5 s | dados para o painel |
 
-Ao vivo, o caminhão não espera os agentes: ele manda o plano e segue andando, buscando as
-mensagens a cada 0,1 s enquanto há uma decisão em aberto (só o pedido mais novo fica na fila). Se
-o servidor cair, a corrida continua sem as decisões seguintes, e o log mostra a falha.
+Ao vivo, o caminhão não espera os agentes. No benchmark, a simulação espera cada decisão, e o
+resultado não depende da velocidade do computador. Para separar as máquinas, rode
+`rodar_servidor --host 0.0.0.0` numa e `--servidor http://<ip>:8000` na outra. As rotas não têm
+senha: use só em rede confiável.
 
-Para separar as máquinas (CARLA numa, agentes e LLM noutra), suba o servidor numa delas e aponte o
-caminhão para ele. As rotas não têm senha: use só numa rede confiável.
+## Como as métricas são calculadas
 
-```bash
-python -m mover.servidor.rodar_servidor --host 0.0.0.0           # máquina dos agentes
-python -m mover.autonomo.dirigir --servidor http://<ip>:8000      # máquina do CARLA
-python -m mover.autonomo.benchmark --voltas 3 --servidor http://<ip>:8000
-```
+- **Diesel, custo e CO2.** O CARLA não simula combustível. O consumo vem do modelo VT-CPFM (Rakha
+  et al.):
 
-Sem `--servidor`, o `dirigir` sobe o servidor no próprio processo (na porta 8000, com a página; com
-`--sem-painel`, numa porta livre só para os agentes), e o `benchmark` também, numa porta livre. A
-conversa continua sendo por HTTP. O código está em `src/mover/autonomo/canal_agentes.py` (lado do
-caminhão) e `src/mover/agentes/servico.py` (lado dos agentes).
+  ```
+  consumo (L/s) = marcha lenta + a1 · P · (1 + P / P2),   com P = max(0, P_rodas) / 0,88
+  ```
 
-## Consumo e custo
+  - **Potência nas rodas.** O `P_rodas` sai da variação da energia cinética da velocidade medida,
+    mais o arrasto, o rolamento e a rampa (pelo *pitch* do caminhão). Antes, a velocidade é
+    suavizada: uma média de dois ticks zera o tremor de 10 Hz do CARLA, e uma média móvel
+    exponencial de 0,16 s dá um corte de ~1 Hz.
+  - **Um só medidor.** O painel ao vivo, a coluna `combustivel_ml` da telemetria, o `resumo.json`
+    da corrida e o benchmark usam esse mesmo cálculo (`MedidorConsumo` em `autonomo/consumo.py`).
+  - **Parâmetros** (`config/autonomo.yaml`, seções `veiculo` e `consumo`):
+    - caminhão de 9 t (o `european_hgv` do CARLA tem 7 t na física);
+    - BSFC de 225 g/kWh e diesel a 0,835 kg/L;
+    - marcha lenta de 2 L/h;
+    - P2 de 1.000 kW, uma suposição;
+    - R$ 6,00/L e 2,68 kg de CO2 por litro.
+- **Por que o diesel mudou de −27 % para −20,5 %.** Até 15/10/2026, o benchmark suavizava a
+  aceleração com um Butterworth de fase zero. Esse filtro oscila antes das freadas bruscas e somava
+  consumo que não existiu à bateria sem agentes. Além disso, o painel usava outro filtro e mostrava
+  outro número. O recálculo corrigiu as duas coisas; tempo e eventos não mudaram.
+- **Energia nos freios.** É a parte negativa da mesma potência.
+- **Eventos bruscos e pior desaceleração.** Usam a aceleração longitudinal suavizada em 1,5 Hz
+  (Butterworth de 4ª ordem, fase zero), a mesma convenção da camada de logs. Um evento é de
+  atenção a partir de |jerk| ≥ 2,5 m/s³ e crítico a partir de ≥ 5 m/s³. Picos a menos de 1 s um do
+  outro contam como um evento só.
+- **Total em 100 voltas.** Soma a 1ª volta (saída parada), a última (parada final) e 98 vezes a
+  média das voltas do meio. Por isso o benchmark pede pelo menos 3 voltas.
+- **`--recalcular`.** Refaz o `resultados.csv`, o `resumo.json` e o `comparativo.png` a partir das
+  telemetrias salvas, sem CARLA. As telemetrias não mudam. Em `20261015_004001`, as colunas
+  `combustivel_ml`, `custo_r` e `co2_g` ainda são as do medidor usado na corrida.
 
-O CARLA não simula combustível. O consumo vem do modelo VT-CPFM (Rakha et al.), aplicado à
-velocidade e à aceleração medidas no CARLA e às previstas no plano do caminhão:
+## Plano de missão e configuração
 
-```
-P_rodas = (m·a + arrasto + rolamento + m·g·rampa) · v   (só a parte positiva)
-P_motor = P_rodas / 0,88
-diesel (L/s) = marcha lenta + a1 · P_motor · (1 + P_motor / P2)
-```
+O `config/missao.yaml` define a volta de 783 m no anel de mão única do `campus_maua.xodr` (R01,
+R10+R07, R02 e R11, sentido anti-horário), com cruzeiro de 30 km/h e estas zonas:
 
-Os parâmetros ficam em `config/autonomo.yaml`, seção `consumo`:
+- 4 lombadas a 10 km/h;
+- 8 faixas de pedestre a 15 km/h;
+- 3 curvas, limitadas a 1,6 m/s² de aceleração lateral;
+- a parada de 4 s no portão, a 422 m da largada.
 
-- diesel, com densidade 0,835 kg/L e BSFC de 225 g/kWh;
-- marcha lenta de 2 L/h;
-- preço de R$ 6,00/L (atualize com o preço médio da ANP);
-- 2,68 kg de CO2 por litro.
-
-O caminhão do modelo de consumo tem 9 t (`veiculo.massa_kg`); o `european_hgv` do CARLA tem 7 t na física
-(o log mostra na largada). O termo quadrático (P2 = 1000 kW) é uma suposição documentada. A economia vem
-de duas coisas: não acelerar até 30 km/h para logo frear, e frear menos (menos energia jogada fora
-nos freios).
-
-## Plano de missão
-
-`config/missao.yaml` tem a rota (~784 m no anel de mão única do `campus_maua.xodr`: R01, R10+R07, R02 e
-R11, sentido anti-horário, cruzeiro de 30 km/h), as zonas e a parada:
-
-- 4 lombadas a 10 km/h (objetos `speedBump` do mapa que ficam no anel; as outras 2 estão na R03);
-- 8 faixas de pedestre a 15 km/h (objetos `crosswalk` do mapa);
-- 3 curvas, com limite por aceleração lateral de 1,6 m/s²;
-- a parada de 4 s no portão, a 422 m da largada (o nó do OSM, ou o ponto `portoes` do config quando o OSM não está na pasta).
-
-Tudo sai do mapa do CARLA, do OSM do campus e do `config/autonomo.yaml` (seção `gerar_missao`):
-
-- a rota: o itinerário (`rota.vias`) lista as vias do mapa na ordem da volta; os conectores das junções são achados no grafo de faixas, e a rota segue o centro das faixas no sentido de tráfego;
-- as lombadas e as faixas de pedestre: os objetos do mapa; só num mapa sem `speedBump` (o antigo `mapa_final.xodr`) valem os pontos fixos `lombadas` e as faixas do OSM;
-- as curvas: a geometria da rota;
-- o portão: o OSM (`data/openstreetviewmap.osm`), projetado no mapa pela georreferência do `.xodr`; sem ele, os pontos `portoes`.
-
-Para gerar o plano de novo:
-
-```bash
-cd src
-python -m mover.autonomo.rota_mapa --figura vias.png
-python -m mover.autonomo.gerar_missao
-```
-
-O primeiro comando lista as vias e desenha os ids no mapa, para mudar o itinerário. O segundo grava `config/missao.yaml` e `config/missao.png`. O arquivo também pode ser editado à mão (`s_ini`/`s_fim` em metros ao longo da rota, `v_max_kmh`, paradas com `duracao_s`). O plano de missão só define as zonas: o que o caminhão faz em cada uma ele decide na corrida, a partir do estado medido.
-
-## Configuração
+As lombadas e as faixas são objetos do mapa, e o portão vem do OSM do campus. Para gerar o plano de
+novo, rode `python -m mover.autonomo.gerar_missao`. Para ver os ids das vias, rode
+`python -m mover.autonomo.rota_mapa --figura vias.png`.
 
 | Arquivo | O que tem |
 |---|---|
-| `config/autonomo.yaml` | missão, geração do plano (vias, largada, lombadas e portões de reserva), caminhão, piloto, governador, opções fixas, decisão (buffer de 10 s, prazo do LLM, valor do tempo), modelo de ML (`suavizador_ml`), consumo, limiares, benchmark, pasta das corridas e CARLA (porta do TM, clima, `telemetria_motor`, `velocidade_minima_tm_kmh`) |
-| `config/missao.yaml` | rota, zonas e paradas da volta (gerado pelo `gerar_missao`) |
-| `config/simulacao.yaml` | mapa (`campus_maua.xodr`), CARLA (host, porta, OpenDRIVE, `mapa_carla`), caminhão, câmeras e servidor do painel |
-| `config/agentes.yaml` | LLM (provedor, modelo), camada de logs (entrada `corrida`, a mais recente), especialista de ML dos logs, chat e base de conhecimento do chat |
-| `.env` (raiz) | `MOVER_LLM_PROVEDOR`, `MOVER_LLM_MODELO` e `OLLAMA_HOST`, gravados pelo script do Ollama (modelo em `.env.example`) |
-
-O Traffic Manager usa a porta 8100, porque a 8000 é a do servidor da página.
+| `config/autonomo.yaml` | missão, caminhão, piloto, governador, opções fixas, decisão (buffer, prazo do LLM, valor do tempo), modelo de ML, consumo, limiares, benchmark e CARLA (porta 8100 do TM, clima, velocidade mínima de 5 km/h no TM) |
+| `config/missao.yaml` | rota, zonas e paradas (gerado pelo `gerar_missao`) |
+| `config/simulacao.yaml` | mapa, conexão com o CARLA (`mapa_carla` carrega um mapa instalado pelo nome), caminhão, câmeras e servidor |
+| `config/agentes.yaml` | LLM, camada de logs, chat |
+| `.env` | `MOVER_LLM_PROVEDOR`, `MOVER_LLM_MODELO` e `OLLAMA_HOST` |
 
 ## Estrutura
 
 ```
-README.md, requirements.txt, .env.example, .gitattributes
-config/        autonomo.yaml, missao.yaml (+ missao.png), simulacao.yaml,
-               agentes.yaml, tratamento.yaml (legado)
+config/        autonomo.yaml, missao.yaml (+ missao.png), simulacao.yaml, agentes.yaml
 scripts/       rodar_gemeo.sh, preparar_ollama.ps1, preparar_ollama.sh
 src/mover/
-  autonomo/    rota, rota_mapa, missao, gerar_missao, planejador (o plano
-               dos próximos 10 s), veiculo, governador, previsao, consumo,
-               simulador (substituto), carla_tm (CARLA), conducao (laço),
-               canal_agentes (HTTP com os agentes), montagem, cliente,
-               dirigir, benchmark, diagnostico, xodr_carla (ajustes do
-               mapa antigo, desligados)
-  agentes/     camada agêntica: decisao (alterações), servico (as rotas
-               dos agentes), suavizador_ml (modelo de ML), grafo/supervisor
-               (logs), rodar_agentes, treinar_especialista_ml, llm...
-  servidor/    app (FastAPI + WebSocket, painel e agentes), sessao, rodar_servidor
-  interface/   rotas, cena, chat e estatico/ (página, CSS e 6 módulos JS)
+  autonomo/    planejador, governador, consumo, conducao (laço), carla_tm (CARLA),
+               simulador (substituto), canal_agentes, dirigir, benchmark, diagnostico,
+               rota, rota_mapa, missao, gerar_missao, veiculo, previsao, montagem
+  agentes/     decisao, servico (rotas dos agentes), suavizador_ml, supervisor, grafo,
+               rodar_agentes, llm
+  servidor/    app (FastAPI + WebSocket), sessao, rodar_servidor
+  interface/   rotas, chat e estatico/ (página, CSS e JS)
   video/       hud, gravar_video
   simulacao/   opendrive, projecao, camera_painel, fila_envio
-               (alinhamento e verificar_mapa: legado)
-  tratamento/  legado (só o sinais.py, de filtros, é usado)
-tests/         test_planejador, test_autonomo, test_agentes_http,
-               test_servidor, test_interface, test_simulacao, test_video,
-               test_scripts, test_agentes
+  tratamento/  legado (só o sinais.py é usado)
+tests/         115 testes
 data/          mapas/ (campus_maua.xodr; mapa_final.xodr, o anterior), modelos/,
-               autonomo/ (corridas), benchmark/ (20261015_004001: o resultado do TCC)
+               autonomo/corridas/, benchmark/20261015_004001 (o resultado do TCC)
 ```
 
 ## Testes
 
-```bash
-python -m pytest tests -q
-```
+Rode `python -m pytest tests -q` da raiz do repositório. São 115 testes, sem CARLA e sem LLM de
+verdade: o lado CARLA usa um módulo `carla` falso, e o LLM usa o provedor falso e um LLM de
+roteiro.
 
-São 109 testes, sem CARLA e sem LLM de verdade (rodam da raiz do repositório). No Windows sem bash, os 16 do `rodar_gemeo.sh` são pulados; sem o `pyproj` e sem a gravação antiga, mais 2 (legado). O lado CARLA é testado com um módulo `carla` falso (um Traffic Manager que leva o caminhão pelo caminho) e o LLM, com o provedor falso e um "LLM de roteiro". Eles conferem que:
+Algumas situações fazem testes serem pulados:
 
-- o plano do caminhão sai do estado medido na corrida atual, com as decisões bruscas e a zona de cada uma;
-- as manobras vêm do Traffic Manager (`get_all_actions`) ou, sem ele, da rota;
-- o modelo de ML treina com situações simuladas e propõe suavizações leves, e a proposta só vale se o modelo do caminhão aprovar;
-- sem decisão brusca no plano, os agentes não alteram nada;
-- na corrida, cada plano parte do estado medido naquela hora, e com as alterações os trancos somem;
-- o plano e o estado do governador vão e voltam em JSON sem mudar a decisão, e a corrida com os agentes por HTTP decide igual à corrida no mesmo processo (ao vivo e esperando cada decisão);
-- a primeira corrida com agentes treina o modelo de ML sozinha;
-- a rota sai do mapa, com os conectores das junções, e as lombadas e faixas de pedestre vêm dos objetos do `campus_maua.xodr`;
-- o LLM fica dentro das alterações seguras, e uma resposta atrasada não trava as decisões seguintes;
-- no CARLA, o TM nunca recebe um pedido minúsculo quando o governador quer andar, e o pedido não dá degrau ao sair da arrancada;
-- a corrida termina com o motivo certo quando o caminhão fica preso, sai da rota, é removido ou o CARLA para de responder;
-- o mapa instalado no CARLA é carregado pelo nome, e telemetria com NaN não derruba o envio ao painel;
-- a corrida ao vivo e o benchmark rodam no simulador substituto;
-- o servidor e o chat funcionam;
-- o MP4 sai em H.264;
-- o `rodar_gemeo.sh` monta o comando certo em cada modo e não coleta nada antes das corridas.
+- no Windows sem bash, os 16 do `rodar_gemeo.sh`;
+- sem o `pyproj` e sem a gravação antiga, mais 2 (legado).
 
-## Limitações (para o TCC)
+Os testes cobrem:
 
-- **O Traffic Manager não é aprendizado de máquina.** É o piloto automático do CARLA (navegação por regras + PID). As frenagens bruscas vêm do plano em degrau, que é como o TM segue limites de velocidade sozinho.
-- **O TM não expõe a velocidade nem a aceleração que vai aplicar.** Ele expõe as manobras que já decidiu (`get_all_actions`), e é isso que o plano usa para as curvas. A velocidade desejada de cada zona é decisão do planejador do caminhão, e a velocidade e a aceleração resultantes vêm do modelo do controle do TM. Por isso o plano é uma previsão; o que vale é o medido no CARLA.
-- **O modelo de ML aprendeu no modelo do caminhão, não no CARLA.** As situações de treino são simuladas pelo mesmo modelo que confere as propostas. Se o caminhão do CARLA responder diferente, ajuste `veiculo` e `piloto` no `config/autonomo.yaml` à telemetria medida e treine de novo.
-- **O efeito da alteração é previsto antes e medido depois.** Os números que valem são os medidos no benchmark no CARLA.
-- **O consumo é estimado** pelo VT-CPFM: o CARLA não tem combustível.
-- **O controle do Traffic Manager limita a suavidade.** O PID longitudinal do TM usa o erro normalizado pelo alvo: perto de 0 km/h ele vai de acelerador cheio (0,85) a freio cheio (0,7). Os eventos críticos que sobram com os agentes vêm disso (arrancadas a ~3 m/s², irreais para um caminhão de 7 t, e paradas). O caminhão segue o pedido do governador, mas não com a suavidade que o modelo do caminhão prevê.
-- **O mapa vai ao CARLA como é.** O `campus_maua.xodr` não é alterado. Com o mapa anterior (`mapa_final.xodr`, vias de uma faixa de 3,2 m sem chão ao lado), o mapa mandado ao CARLA ganhava acostamentos e tinha junções de passagem colapsadas (`src/mover/autonomo/xodr_carla.py`); isso está desligado, com as linhas comentadas em `carla_tm.py`, `gravar_video.py` e `config/simulacao.yaml`. Com o mapa anterior, a volta também rodava no sentido contrário ao real; por isso os benchmarks de 14/10/2026 não se comparam com o resultado atual.
-- **A latência do LLM depende da máquina.** Na VM, o gemma2:2b respondeu em 3,5 a 5 s, dentro do prazo de 6 s. Numa máquina sem GPU ele pode passar do prazo, e então as decisões ficam com a regra (o log mostra o motivo).
+- o plano a partir do estado atual;
+- o ML e a conferência das propostas;
+- a regra e o LLM dentro das opções seguras;
+- a corrida e o benchmark no substituto;
+- o HTTP entre caminhão e agentes;
+- a rota e os objetos do mapa;
+- o fim da corrida com motivo;
+- o servidor, o chat e o vídeo;
+- o medidor de consumo (`tests/test_consumo.py`): nada somado antes de uma freada, a energia
+  inteira de cada frenagem, o tremor ignorado, o mesmo número no painel e no benchmark, e o
+  `--recalcular`.
 
-### O que foi preciso para o caminhão rodar no CARLA
+## Limitações
 
-Problemas achados nas corridas na VM e o que ficou no código (`carla_tm.py`, `conducao.py`, `governador.py`):
+- **O TM não é aprendizado de máquina.** São regras e PID, e ele não expõe a velocidade nem a
+  aceleração que vai aplicar. O plano enviado aos agentes é uma previsão do modelo do caminhão; o
+  que vale é o medido no CARLA.
+- **O ML aprendeu no modelo do caminhão, não no CARLA.**
+  - Se mudar `veiculo`, `piloto` ou o valor do tempo, treine de novo.
+  - O modelo do repositório foi treinado em 14/10/2026 (R² de 0,45 / 0,88 / 0,98 e 100 % das
+    propostas sem eventos no teste) e salvo com o scikit-learn 1.7.2. Com outra versão, o
+    carregamento avisa; instale a 1.7.2 ou treine de novo.
+- **O consumo é estimado.** A economia de diesel fica entre −16 % e −23 % conforme a suavização, e
+  o modelo usa 9 t, enquanto o caminhão do CARLA tem 7 t.
+- **A contagem de eventos depende do corte de 1,5 Hz.** Com acelerador parcial, o caminhão do CARLA
+  oscila de leve. Com cortes acima de ~2,5 Hz, essas oscilações viram eventos de atenção, e a
+  bateria com agentes empata ou passa a sem agentes nesse critério.
+- **A física do CARLA não é a de um caminhão real.**
+  - Sem agentes, as freadas chegam a −16,7 m/s² (1,7 g), e as arrancadas a ~3 m/s².
+  - Com a velocidade desejada em 0, o freio do TM vem NaN (o PID divide pelo alvo), e o caminhão
+    para seco.
+- **O ganho depende da linha de base e do teto de velocidade.** Sem agentes, o caminhão freia tarde
+  por projeto (4,5 m/s²). Com agentes, parte da economia vem de andar mais devagar entre as zonas.
+- **Ainda não há ablações no CARLA.** Faltam rodar `--sem-ml` e `--sem-llm`. No benchmark, o LLM
+  não mudou nenhuma decisão.
+- **A latência do LLM depende da máquina.** Na VM, foi de 3,6 a 5,1 s. Sem GPU, pode passar dos
+  6 s, e então vale a regra (o log mostra o motivo).
+- **O mapa usado não fica registrado.** O `resumo.json` não diz se o mundo veio do `.xodr` ou do
+  pacote instalado (`mapa_carla`).
 
-- **Altura das vias.** O `campus_maua.xodr` tem as vias a ~750 m de altitude. Os pontos da largada e do caminho do TM levam o z da via mais próxima em planta; em z = 0, o CARLA os casaria com a via mais baixa, não com a mais próxima.
-- **Caminho do TM.** O caminho (`set_path`) vai de uma vez só, da largada até 30 m depois da chegada: renová-lo no meio da corrida esvazia o buffer do TM, que relocaliza o caminhão e pode pegar outra faixa. Ele não tem pontos dentro das junções: numa bifurcação, o TM escolhe o ramo pela via do próximo ponto, e um ponto ainda dentro da junção o fazia errar o ramo.
-- **Velocidade mínima pedida ao TM.** Com pedidos de 1 a 3 km/h, o PID do TM alterna acelerador e freio e o caminhão rasteja (visto na corrida `20261011_121132_agentes`: 2 km/h medidos com alvo de 23 km/h). Quando o governador quer andar, o TM recebe pelo menos 5 km/h (`carla.velocidade_minima_tm_kmh`). Abaixo de 5 km/h, na arrancada, o pedido é a velocidade atual + 5 km/h (limitado pelo alvo), e a referência do governador continua dali, sem degrau.
-- **Fim da corrida com motivo.** Parado 30 s com alvo acima de 3,6 km/h: `preso`. Mais de 12 m longe da rota por 3 s: `fora_da_rota` (a 4 m o log avisa). Removido pelo CARLA: `removido`. Tick sem resposta: `sem_resposta`; um vigia encerra o processo se um tick não voltar em 90 s (o TM síncrono travado bloqueia até o Ctrl+C). Em todos os casos a corrida grava o que andou.
-- **LLM atrasado.** Uma chamada que passa do prazo continua ocupando o LLM; a decisão seguinte vai direto para a regra em vez de esperar atrás dela.
+### Problemas resolvidos para rodar no CARLA
 
+- **Altura das vias.** As vias ficam a ~750 m de altitude, então os pontos da largada e do caminho
+  do TM levam o z da via mais próxima.
+- **Caminho do TM.** O caminho (`set_path`) vai de uma vez, da largada até 30 m depois da chegada,
+  e sem pontos dentro das junções. Renová-lo no meio da corrida, ou deixar pontos nas junções,
+  fazia o TM trocar de faixa.
+- **Velocidade mínima no TM.** Quando o governador quer andar, o TM recebe pelo menos 5 km/h; com
+  pedidos de 1 a 3 km/h, o caminhão rastejava. Na arrancada, o pedido é a velocidade atual
+  + 5 km/h.
+- **Fim da corrida com motivo.** A corrida termina como `preso` (30 s parado), `fora_da_rota`
+  (mais de 12 m por 3 s), `removido` ou `sem_resposta` (um tick que não volta em 90 s). Em todos os
+  casos, ela grava o que andou.
+- **Portas.** O TM usa a porta 8100, porque a 8000 é do painel.
 
 ## Legado
 
-O repositório ainda tem o código das etapas antigas, que usavam a volta gravada com o celular pelo Sensor Logger (`data/csv_maua`). Nada do fluxo acima usa esse código:
-
-- `src/mover/tratamento/` e `config/tratamento.yaml`: o tratamento do Sensor Logger (`python -m mover.tratamento.tratar_dados`);
-- `src/mover/simulacao/alinhamento.py` e `verificar_mapa.py`: casavam a gravação com o mapa;
-- `python -m mover.agentes.rodar_agentes --entrada ../data/tratado/telemetria_tratada.csv --injetar-eventos`: a análise antiga, com eventos sintéticos.
-
-A exceção é o `src/mover/tratamento/sinais.py` (filtros), usado pelo consumo e pela camada de logs. O resto pode ser apagado sem afetar o gêmeo digital.
+O código das etapas antigas, que usavam a volta gravada com o celular (`src/mover/tratamento/`,
+`simulacao/alinhamento.py`, `simulacao/verificar_mapa.py` e `config/tratamento.yaml`), continua no
+repositório, mas nada do fluxo acima o usa. A exceção é o `tratamento/sinais.py`, com os filtros.
