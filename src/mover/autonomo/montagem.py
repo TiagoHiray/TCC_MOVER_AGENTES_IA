@@ -14,8 +14,7 @@ import numpy as np
 
 from mover.agentes.decisao import Decisor
 from mover.agentes.llm import ClienteLLM
-from mover.agentes.telemetria_viva import MedidorConsumo
-from mover.autonomo.consumo import Limiares, ParametrosConsumo, eventos_jerk, jerk, suavizar
+from mover.autonomo.consumo import Limiares, MedidorConsumo, ParametrosConsumo, eventos_jerk, jerk, suavizar
 from mover.autonomo.governador import OPCOES_PADRAO, ConfigGovernador, Governador, Intervencao
 from mover.autonomo.missao import PlanoMissao
 from mover.autonomo.planejador import PlanejadorCaminhao
@@ -95,7 +94,7 @@ class Montagem:
         """
         traj = self.simular_corrida("bruto", voltas)
         medidor = MedidorConsumo(self.caminhao, self.consumo)
-        litros = np.array([medidor.passo(float(v), float(a), self.dt) for v, a in zip(traj.v, traj.a)])
+        litros = np.array([medidor.passo(float(v), self.dt) for v in traj.v])
         a_suave = suavizar(traj.a, self.dt, self.limiares.fc_hz)
         eventos = eventos_jerk(traj.t, jerk(a_suave, self.dt), self.limiares)
         d_eventos = np.sort([float(np.interp(e["t_pico"], traj.t, traj.d)) for e in eventos])

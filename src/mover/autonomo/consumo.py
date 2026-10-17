@@ -1,14 +1,27 @@
 """Consumo de combustível, custo, CO2 e métricas de condução de um trecho ou de uma volta.
 
-O CARLA não simula combustível. O consumo vem de um modelo por potência (linha de Willans, a
-forma do VT-CPFM sem o termo quadrático), calculado a partir da velocidade, da aceleração e da
-rampa, com a massa do caminhão:
+O CARLA não simula combustível. O consumo vem do modelo VT-CPFM (Rakha et al.): linha de Willans
+mais um termo quadrático, a partir da potência nas rodas, com a massa do caminhão:
 
-    P_rodas = max(0, m * a + F_resistencia(v, rampa)) * v
-    combustível (L/s) = marcha_lenta + (P_rodas / eficiência) * BSFC / densidade
+    P_rodas = (m * a + arrasto(v) + rolamento + m * g * rampa) * v
+    P_motor = max(0, P_rodas) / eficiência
+    combustível (L/s) = marcha_lenta + a1 * P_motor * (1 + P_motor / P2),  a1 = BSFC / densidade
 
 Frenando ou em desaceleração, o motor gasta só a marcha lenta. A energia tirada pelos freios é
 a que o motor já tinha pago antes: é ela que a camada agêntica tenta não desperdiçar.
+
+Há duas formas de chegar à potência:
+- consumo medido (MedidorConsumo e consumo_medido): o painel ao vivo, a corrida e o benchmark usam o
+  mesmo medidor. A potência de cada tick sai da variação da energia cinética da velocidade
+  suavizada (média de dois ticks e média móvel exponencial causal de 0,16 s, corte de ~1 Hz) mais
+  as resistências. Assim cada arrancada e cada frenagem entram com a energia inteira, o tremor de
+  10 Hz da velocidade do CARLA não vira consumo e nada é somado antes de uma freada brusca (o
+  filtro é causal e não oscila);
+- previsões do modelo do caminhão (metricas(), usada pelo Decisor e pelo treino do modelo de ML): a
+  aceleração simulada, suavizada em 1,5 Hz.
+
+Os eventos bruscos (jerk) usam sempre a aceleração suavizada em 1,5 Hz, a mesma convenção da camada
+de logs.
 """
 
 from __future__ import annotations
@@ -69,6 +82,73 @@ def taxa_combustivel_l_s(p_rodas_kw: np.ndarray, p: ParametrosConsumo) -> np.nda
     return p.marcha_lenta_l_h / 3600.0 + extra
 
 
+TAU_CONSUMO_S = 0.16  # suavização da velocidade no consumo medido: média móvel exponencial com corte de ~1 Hz
+
+
+class MedidorConsumo:
+    """Consumo medido, acumulado tick a tick: o mesmo no painel ao vivo, na corrida e no benchmark.
+
+    A potência nas rodas de cada tick sai da variação da energia cinética da velocidade suavizada
+    mais o arrasto, o rolamento e a rampa. A velocidade passa por uma média de dois ticks, que zera o
+    tremor de 10 Hz (tick a tick) da velocidade do CARLA, e por uma média móvel exponencial causal
+    de `tau_s` (corte de ~1 Hz). Assim:
+    - cada arrancada e cada frenagem entram com a energia inteira (m·Δ(v²)/2), sem a defasagem de
+      multiplicar uma aceleração filtrada pela velocidade do instante;
+    - o tremor não vira consumo (com a potência baixa, a parte positiva dele seria somada);
+    - nada é somado antes de uma freada brusca: um filtro de fase zero (o Butterworth de 1,5 Hz usado
+      antes) oscila antes do degrau e somava consumo que não existiu.
+    """
+
+    def __init__(self, caminhao: ParametrosCaminhao, consumo: ParametrosConsumo, tau_s: float = TAU_CONSUMO_S):
+        self.caminhao = caminhao
+        self.consumo = consumo
+        self.tau_s = float(tau_s)
+        self.v_suave: float | None = None
+        self._v_tick_anterior: float | None = None
+        self.litros = 0.0
+        self.energia_rodas_kwh = 0.0
+        self.energia_freio_kwh = 0.0
+
+    def incrementos(self, v: float, dt: float, rampa: float = 0.0) -> tuple[float, float, float]:
+        """Avança um tick e devolve (litros, kWh nas rodas, kWh nos freios) desse tick, sem acumular."""
+        v = max(0.0, float(v))
+        media = v if self._v_tick_anterior is None else 0.5 * (v + self._v_tick_anterior)
+        self._v_tick_anterior = v
+        anterior = media if self.v_suave is None else self.v_suave
+        atual = anterior + (media - anterior) * min(1.0, dt / self.tau_s)
+        self.v_suave = atual
+        c = self.caminhao
+        cinetica_w = 0.5 * c.massa_kg * (atual * atual - anterior * anterior) / dt
+        p_kw = (cinetica_w + c.resistencia_n(atual, float(rampa)) * atual) / 1000.0
+        litros = float(taxa_combustivel_l_s(p_kw, self.consumo)) * dt
+        return litros, max(p_kw, 0.0) * dt / 3600.0, max(-p_kw, 0.0) * dt / 3600.0
+
+    def passo(self, v: float, dt: float, rampa: float = 0.0) -> float:
+        """Acumula um tick (v em m/s, dt em s, rampa = tangente da inclinação) e devolve os litros acumulados."""
+        litros, rodas, freio = self.incrementos(v, dt, rampa)
+        self.litros += litros
+        self.energia_rodas_kwh += rodas
+        self.energia_freio_kwh += freio
+        return self.litros
+
+    @property
+    def custo_r(self) -> float:
+        return self.litros * self.consumo.preco_r_l
+
+
+def consumo_medido(v: np.ndarray, dt: float, c: ParametrosCaminhao, p: ParametrosConsumo,
+                   rampa: np.ndarray | float = 0.0, tau_s: float = TAU_CONSUMO_S) -> dict[str, np.ndarray]:
+    """O MedidorConsumo sobre uma série inteira: litros, kWh nas rodas e kWh nos freios de cada tick.
+
+    A soma acumulada de "litros" é a coluna combustivel_ml que a corrida grava ao vivo (em L).
+    """
+    v = np.asarray(v, float)
+    rampa = np.broadcast_to(np.asarray(rampa, float), v.shape)
+    medidor = MedidorConsumo(c, p, tau_s)
+    saida = np.array([medidor.incrementos(float(vi), dt, float(ri)) for vi, ri in zip(v, rampa)], float).reshape(-1, 3)
+    return {"litros": saida[:, 0], "rodas_kwh": saida[:, 1], "freio_kwh": saida[:, 2]}
+
+
 def suavizar(a: np.ndarray, dt: float, fc_hz: float) -> np.ndarray:
     return passa_baixa(np.asarray(a, float), 1.0 / dt, fc_hz, ordem=4)
 
@@ -96,7 +176,12 @@ def eventos_jerk(t: np.ndarray, j: np.ndarray, limiares: Limiares) -> list[dict[
 
 def metricas(t: np.ndarray, v: np.ndarray, a: np.ndarray, c: ParametrosCaminhao, p: ParametrosConsumo,
              limiares: Limiares | None = None, rampa: np.ndarray | float = 0.0, ja_suave: bool = False) -> dict[str, Any]:
-    """Métricas de um trecho amostrado a passo constante (t, v em m/s, a em m/s²)."""
+    """Métricas de um trecho amostrado a passo constante (t, v em m/s, a em m/s²).
+
+    O consumo e as energias daqui usam a aceleração suavizada em 1,5 Hz: servem às previsões do modelo
+    do caminhão. Na telemetria medida (corrida e benchmark), metricas_da_corrida troca esses campos
+    pelos do MedidorConsumo, o mesmo do painel.
+    """
     limiares = limiares or Limiares()
     t = np.asarray(t, float)
     v = np.asarray(v, float)

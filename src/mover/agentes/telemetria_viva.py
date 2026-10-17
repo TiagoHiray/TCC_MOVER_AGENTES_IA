@@ -1,7 +1,8 @@
 """Telemetria ao vivo do caminhão autônomo para a camada agêntica.
 
 Cada tick do simulador (CARLA ou substituto) vira uma linha com as mesmas chaves. Aqui ficam:
-- MedidorConsumo: consumo e custo acumulados tick a tick (para o painel ao vivo);
+- MedidorConsumo: consumo e custo acumulados tick a tick (definido em mover.autonomo.consumo e
+  reexportado aqui: é o mesmo medidor do painel, da corrida e do benchmark);
 - rotular_manobras: rótulo de manobra no vocabulário do coleta_carla (acelerar, frear, curva...);
 - para_agentes: o trecho de telemetria no formato que os fatos e os especialistas esperam, com a
   aceleração suavizada em 1,5 Hz e o jerk (os mesmos limiares da camada agêntica).
@@ -15,8 +16,7 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
-from mover.autonomo.consumo import ParametrosConsumo, potencia_rodas_kw, taxa_combustivel_l_s
-from mover.autonomo.veiculo import ParametrosCaminhao
+from mover.autonomo.consumo import MedidorConsumo
 from mover.tratamento.sinais import moda_movel, passa_baixa
 
 # colunas mandadas ao servidor a cada tick (o resto da linha fica só no CSV local)
@@ -24,26 +24,7 @@ COLUNAS_TELEMETRIA = ("frame", "sim_time", "hora_local", "x", "y", "z", "rumo_gr
                       "yaw_rate_dps", "throttle", "brake", "steer", "gear", "rpm", "d", "s", "volta", "odom_m", "rampa",
                       "v_desejada", "v_alvo_kmh", "modo_tick", "limitado_por", "combustivel_l", "custo_r", "fonte")
 
-
-class MedidorConsumo:
-    """Consumo acumulado tick a tick, com a aceleração filtrada (média móvel exponencial de ~0,3 s)."""
-
-    def __init__(self, caminhao: ParametrosCaminhao, consumo: ParametrosConsumo, tau_s: float = 0.3):
-        self.caminhao = caminhao
-        self.consumo = consumo
-        self.tau_s = tau_s
-        self.a_filtrada = 0.0
-        self.litros = 0.0
-
-    def passo(self, v: float, a: float, dt: float, rampa: float = 0.0) -> float:
-        self.a_filtrada += (a - self.a_filtrada) * min(1.0, dt / self.tau_s)
-        p = potencia_rodas_kw(np.array([v]), np.array([self.a_filtrada]), rampa, self.caminhao)
-        self.litros += float(taxa_combustivel_l_s(p, self.consumo)[0]) * dt
-        return self.litros
-
-    @property
-    def custo_r(self) -> float:
-        return self.litros * self.consumo.preco_r_l
+__all__ = ["COLUNAS_TELEMETRIA", "MedidorConsumo", "para_agentes", "resumo_numerico", "rotular_manobras"]
 
 
 def rotular_manobras(v: np.ndarray, a: np.ndarray, yaw_rate_dps: np.ndarray, taxa_hz: float) -> np.ndarray:

@@ -28,9 +28,8 @@ import numpy as np
 
 from mover.agentes.decisao import Decisor, janela_do_bloco, janela_inicial
 from mover.agentes.servico import ServicoAgentes
-from mover.agentes.telemetria_viva import MedidorConsumo
 from mover.autonomo.canal_agentes import CanalAgentes, CanalLocal
-from mover.autonomo.consumo import Limiares, ParametrosConsumo, metricas
+from mover.autonomo.consumo import Limiares, MedidorConsumo, ParametrosConsumo, consumo_medido, metricas
 from mover.autonomo.governador import NOMES_OPCAO, Governador, Intervencao
 from mover.autonomo.missao import PlanoMissao
 from mover.autonomo.planejador import PlanejadorCaminhao, PlanoFuturo
@@ -126,13 +125,27 @@ class ResultadoConducao:
 
 def metricas_da_corrida(resultado: ResultadoConducao, comprimento_m: float, caminhao: ParametrosCaminhao,
                         consumo: ParametrosConsumo, limiares: Limiares) -> dict[str, Any]:
-    """Métricas da corrida inteira e de cada volta (mesmo modelo de consumo para os dois modos)."""
+    """Métricas da corrida inteira e de cada volta (mesmo modelo de consumo para os dois modos).
+
+    O consumo, o custo, o CO2 e as energias saem do MedidorConsumo, o mesmo que o painel mostra ao vivo,
+    rodado sobre a corrida inteira (sem recomeçar a cada volta): a soma das voltas é o consumo
+    acumulado da corrida. O tempo, a distância, a aceleração e os eventos de jerk saem de metricas().
+    """
     if len(resultado.linhas) < 2:
         return {"total": {}, "voltas": []}
     t, v, a = resultado.coluna("sim_time"), resultado.coluna("speed_mps"), resultado.coluna("acc_long")
     d = resultado.coluna("d")
     rampa = np.nan_to_num(resultado.coluna("rampa"))
-    total = metricas(t, v, a, caminhao, consumo, limiares, rampa=rampa)
+    medido = consumo_medido(v, float(np.median(np.diff(t))), caminhao, consumo, rampa)
+
+    def com_consumo_medido(m: dict[str, Any], sel: Any) -> dict[str, Any]:
+        litros = float(np.sum(medido["litros"][sel]))
+        m.update({"combustivel_l": litros, "custo_r": litros * consumo.preco_r_l, "co2_kg": litros * consumo.co2_kg_l,
+                  "energia_rodas_kwh": float(np.sum(medido["rodas_kwh"][sel])),
+                  "energia_freio_kwh": float(np.sum(medido["freio_kwh"][sel]))})
+        return m
+
+    total = com_consumo_medido(metricas(t, v, a, caminhao, consumo, limiares, rampa=rampa), slice(None))
     voltas = []
     indice = np.floor(np.maximum(d, 0.0) / comprimento_m + 1e-9).astype(int)
     indice = np.minimum(indice, max(0, resultado.voltas - 1))  # a parada final fica na última volta
@@ -140,7 +153,7 @@ def metricas_da_corrida(resultado: ResultadoConducao, comprimento_m: float, cami
         sel = indice == k
         if sel.sum() < 2:
             continue
-        m = metricas(t[sel], v[sel], a[sel], caminhao, consumo, limiares, rampa=rampa[sel])
+        m = com_consumo_medido(metricas(t[sel], v[sel], a[sel], caminhao, consumo, limiares, rampa=rampa[sel]), sel)
         voltas.append({"volta": k + 1, **m})
     return {"total": total, "voltas": voltas}
 
@@ -339,7 +352,7 @@ class Conducao:
                     break
                 t, d, v, a = float(linha["sim_time"]), float(linha["d"]), float(linha["speed_mps"]), float(linha["acc_long"])
                 self.estado = {"t": t, "d": d, "v": v, "a": a}
-                litros = medidor.passo(v, a, dt, float(linha.get("rampa", 0.0) or 0.0))
+                litros = medidor.passo(v, dt, float(linha.get("rampa", 0.0) or 0.0))
                 ultimo = gov.ultimo
                 linha.update({
                     "t": round(t, 3),

@@ -5,7 +5,7 @@
   "combustivel": "diesel",
   "preco_r_l": 6.0,
   "co2_kg_l": 2.68,
-  "modelo_consumo": "VT-CPFM (Willans + termo quadrático) sobre a velocidade e a aceleração medidas",
+  "modelo_consumo": "VT-CPFM sobre a velocidade medida: potência pela energia cinética da velocidade suavizada (média de dois ticks e média móvel exponencial de 0.16 s) mais arrasto, rolamento e rampa; o mesmo medidor do painel",
   "llm_decisoes": "ollama:gemma2:2b",
   "suavizador_ml": "floresta aleatória (2000 situações simuladas)",
   "agentes_http": "http://127.0.0.1:8000",
@@ -28,22 +28,22 @@
       "tempo_s": 166.2,
       "distancia_m": 780.367,
       "vel_media_kmh": 16.903,
-      "combustivel_ml": 356.98,
-      "custo_r": 2.142,
-      "co2_g": 956.733,
+      "combustivel_ml": 336.153,
+      "custo_r": 2.017,
+      "co2_g": 900.9,
       "eventos_atencao": 2.0,
       "eventos_criticos": 22.333,
       "eventos_total": 24.333,
       "jerk_max_mps3": 65.29,
       "acel_min_mps2": -15.087,
       "acel_max_mps2": 6.157,
-      "energia_freio_wh": 646.067
+      "energia_freio_wh": 586.0
     },
     "total": {
       "tempo_s": 498.6,
-      "combustivel_ml": 1070.94,
-      "custo_r": 6.426,
-      "co2_g": 2870.2,
+      "combustivel_ml": 1008.46,
+      "custo_r": 6.051,
+      "co2_g": 2702.7,
       "eventos_total": 73.0
     }
   },
@@ -53,44 +53,46 @@
       "tempo_s": 189.417,
       "distancia_m": 779.9,
       "vel_media_kmh": 14.823,
-      "combustivel_ml": 260.767,
-      "custo_r": 1.565,
-      "co2_g": 698.9,
+      "combustivel_ml": 267.39,
+      "custo_r": 1.604,
+      "co2_g": 716.6,
       "eventos_atencao": 2.667,
       "eventos_criticos": 4.667,
       "eventos_total": 7.333,
       "jerk_max_mps3": 24.357,
       "acel_min_mps2": -2.96,
       "acel_max_mps2": 6.483,
-      "energia_freio_wh": 358.667
+      "energia_freio_wh": 351.767
     },
     "total": {
       "tempo_s": 568.25,
-      "combustivel_ml": 782.3,
-      "custo_r": 4.694,
-      "co2_g": 2096.7,
+      "combustivel_ml": 802.17,
+      "custo_r": 4.813,
+      "co2_g": 2149.8,
       "eventos_total": 22.0
     }
   },
   "diferenca_pct": {
-    "combustivel_ml": -26.95,
+    "combustivel_ml": -20.46,
     "tempo_s": 13.97,
     "eventos_total": -69.86,
-    "energia_freio_wh": -44.48
+    "energia_freio_wh": -39.97
   },
   "extrapolacao": {
     "voltas": 100,
-    "litros_sem_agentes": 35.24,
-    "litros_com_agentes": 25.88,
-    "economia_l": 9.36,
-    "economia_r": 56.13,
-    "economia_co2_kg": 25.07,
+    "litros_sem_agentes": 33.28,
+    "litros_com_agentes": 26.52,
+    "economia_l": 6.77,
+    "economia_r": 40.59,
+    "economia_co2_kg": 18.13,
     "eventos_sem_agentes": 2304,
     "eventos_com_agentes": 604,
     "tempo_extra_min": 38.5
   },
   "arquivos": {
-    "resultados": "C:\\CARLA_0.9.16\\PythonAPI\\tcc_e\\data\\benchmark\\20261015_004001\\resultados.csv",
-    "figura": "C:\\CARLA_0.9.16\\PythonAPI\\tcc_e\\data\\benchmark\\20261015_004001\\comparativo.png"
-  }
+    "resultados": "data/benchmark/20261015_004001/resultados.csv",
+    "figura": "data/benchmark/20261015_004001/comparativo.png"
+  },
+  "recalculado_em": "2026-10-17T14:06:38",
+  "recalculo": "métricas refeitas a partir das telemetrias salvas (python -m mover.autonomo.benchmark --recalcular); as colunas combustivel_ml, custo_r e co2_g das telemetrias continuam as do medidor usado na corrida"
 }

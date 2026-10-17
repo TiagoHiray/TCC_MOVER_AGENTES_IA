@@ -10,8 +10,8 @@ Mede o efeito prático da camada agêntica na volta autônoma do campus:
 Cada bateria sai parada da largada e termina parada na chegada. Entre as duas, o caminhão volta à
 largada (no CARLA, um caminhão novo).
 
-O consumo vem do mesmo modelo (VT-CPFM, diesel) aplicado à velocidade e à aceleração medidas nas
-duas baterias. Saída em data/benchmark/<data>/:
+O consumo vem do mesmo medidor do painel (VT-CPFM, diesel; potência pela energia cinética da
+velocidade medida, suavizada em ~1 Hz), aplicado às duas baterias. Saída em data/benchmark/<data>/:
 - resultados.csv: uma linha por volta de cada bateria, as médias, a diferença e a extrapolação
   para 100 voltas (L, R$, kg de CO2, eventos bruscos e tempo);
 - resumo.json (lido pela página), decisoes.jsonl, telemetria_sem_agentes.csv,
@@ -23,6 +23,7 @@ Uso, a partir da pasta src/ do repositório:
     python -m mover.autonomo.benchmark --voltas 3 --sem-carla   # simulador substituto
     python -m mover.autonomo.benchmark --voltas 3 --sem-llm     # agentes só com a regra
     python -m mover.autonomo.benchmark --voltas 3 --sem-ml      # agentes sem o modelo de ML (opções fixas)
+    python -m mover.autonomo.benchmark --recalcular ../data/benchmark/<data>  # refaz as métricas das telemetrias salvas
 """
 
 from __future__ import annotations
@@ -45,14 +46,18 @@ import pandas as pd
 from mover.agentes.llm import PROVEDORES
 from mover.autonomo.canal_agentes import CanalAgentes, ErroAgentes
 from mover.autonomo.conducao import Conducao, FimDoSimulador, OpcoesConducao, ResultadoConducao, metricas_da_corrida
+from mover.autonomo.consumo import TAU_CONSUMO_S
 from mover.autonomo.montagem import Montagem, montar
-from mover.config import caminho, carregar_yaml
+from mover.config import RAIZ, caminho, carregar_yaml
 
 log = logging.getLogger("mover.autonomo")
 
 COLUNAS = ("tempo_s", "distancia_m", "vel_media_kmh", "combustivel_ml", "custo_r", "co2_g", "eventos_atencao",
            "eventos_criticos", "eventos_total", "jerk_max_mps3", "acel_min_mps2", "acel_max_mps2", "energia_freio_wh")
 NOMES_MODO = {"bruto": "sem_agentes", "agentes": "com_agentes"}
+MODELO_CONSUMO = (f"VT-CPFM sobre a velocidade medida: potência pela energia cinética da velocidade suavizada (média de "
+                  f"dois ticks e média móvel exponencial de {TAU_CONSUMO_S:g} s) mais arrasto, rolamento e rampa; o mesmo "
+                  f"medidor do painel")
 
 
 def linha_da_volta(modo: str, volta: Any, m: dict[str, Any], preco: float, co2_kg_l: float) -> dict[str, Any]:
@@ -208,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--saida", help="pasta de saída (padrão: data/benchmark/<data>)")
     parser.add_argument("--servidor", help="URL de um servidor dos agentes já no ar (padrão: sobe um neste processo)")
     parser.add_argument("--silencioso", action="store_true", help="não imprime cada decisão")
+    parser.add_argument("--recalcular", metavar="PASTA",
+                        help="refaz resultados.csv, resumo.json e comparativo.png de um benchmark salvo, a partir das "
+                             "telemetrias (sem simulador nem agentes)")
     args = parser.parse_args(argv)
 
     from mover.autonomo.dirigir import abrir_agentes, preparar_simulador
@@ -215,12 +223,14 @@ def main(argv: list[str] | None = None) -> int:
 
     configurar_logs()
     cfg = carregar_yaml(args.config)
-    cfg_sim = carregar_yaml(args.config_simulacao) if caminho(args.config_simulacao).exists() else {}
-    cfg_agentes = carregar_yaml(args.config_agentes)
     cb = cfg.get("benchmark") or {}
     m = montar(cfg, args.missao)
-    voltas = int(args.voltas or cb.get("voltas", 3))
     alvo = int(args.extrapolar or cb.get("extrapolar_voltas", 100))
+    if args.recalcular:
+        return recalcular(Path(args.recalcular).resolve(), m, alvo)
+    cfg_sim = carregar_yaml(args.config_simulacao) if caminho(args.config_simulacao).exists() else {}
+    cfg_agentes = carregar_yaml(args.config_agentes)
+    voltas = int(args.voltas or cb.get("voltas", 3))
     pasta = caminho(args.saida) if args.saida else caminho(cb.get("pasta", "data/benchmark")) / datetime.now().strftime("%Y%m%d_%H%M%S")
     pasta.mkdir(parents=True, exist_ok=True)
     imprimir = (lambda texto: None) if args.silencioso else (lambda texto: print(texto, flush=True))
@@ -258,11 +268,7 @@ def main(argv: list[str] | None = None) -> int:
             parar_servidor(servidor, thread)
 
     preco, co2 = m.consumo.preco_r_l, m.consumo.co2_kg_l
-    met_bruto = metricas_da_corrida(res_bruto, m.plano.comprimento, m.caminhao, m.consumo, m.limiares)
-    met_agentes = metricas_da_corrida(res_agentes, m.plano.comprimento, m.caminhao, m.consumo, m.limiares)
-    v_bruto = [linha_da_volta("bruto", v["volta"], v, preco, co2) for v in met_bruto["voltas"]]
-    v_agentes = [linha_da_volta("agentes", v["volta"], v, preco, co2) for v in met_agentes["voltas"]]
-    tabela = montar_resultados(v_bruto, v_agentes, alvo)
+    tabela, comparacao = calcular_resultados(res_bruto, res_agentes, m, alvo)
     tabela.to_csv(pasta / "resultados.csv", index=False)
     pd.DataFrame(res_bruto.linhas).to_csv(pasta / "telemetria_sem_agentes.csv", index=False)
     pd.DataFrame(res_agentes.linhas).to_csv(pasta / "telemetria_com_agentes.csv", index=False)
@@ -274,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     resumo = {
         "data": datetime.now().isoformat(timespec="seconds"), "simulador": sim.nome, "voltas": voltas,
         "combustivel": m.consumo.combustivel, "preco_r_l": preco, "co2_kg_l": co2,
-        "modelo_consumo": "VT-CPFM (Willans + termo quadrático) sobre a velocidade e a aceleração medidas",
+        "modelo_consumo": MODELO_CONSUMO,
         "llm_decisoes": info_agentes.get("llm"),
         "suavizador_ml": info_agentes.get("ml"),
         "agentes_http": url,
@@ -284,11 +290,31 @@ def main(argv: list[str] | None = None) -> int:
         "opcoes": {o: sum(d.get("opcao") == o for d in res_agentes.decisoes)
                    for o in sorted({d.get("opcao") for d in res_agentes.decisoes})},
         "fim": {"sem_agentes": res_bruto.motivo_fim, "com_agentes": res_agentes.motivo_fim},
-        **resumo_da_comparacao(v_bruto, v_agentes, alvo, preco, co2),
-        "arquivos": {"resultados": str(pasta / "resultados.csv"), "figura": str(figura) if figura else None},
+        **comparacao,
+        "arquivos": {"resultados": _no_resumo(pasta / "resultados.csv"), "figura": _no_resumo(figura) if figura else None},
     }
     (pasta / "resumo.json").write_text(json.dumps(resumo, ensure_ascii=False, indent=2), encoding="utf-8")
+    imprimir_resultados(tabela, resumo)
+    log.info("Resultados em %s", pasta)
+    if not (res_bruto.completa and res_agentes.completa):
+        log.error("Alguma bateria não chegou ao fim (%s / %s): confira antes de usar os números.",
+                  res_bruto.motivo_fim, res_agentes.motivo_fim)
+        return 2
+    return 0
 
+
+def calcular_resultados(res_bruto: ResultadoConducao, res_agentes: ResultadoConducao, m: Montagem,
+                        alvo: int) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """A tabela do resultados.csv e a comparação do resumo.json, a partir da telemetria das duas baterias."""
+    preco, co2 = m.consumo.preco_r_l, m.consumo.co2_kg_l
+    met_bruto = metricas_da_corrida(res_bruto, m.plano.comprimento, m.caminhao, m.consumo, m.limiares)
+    met_agentes = metricas_da_corrida(res_agentes, m.plano.comprimento, m.caminhao, m.consumo, m.limiares)
+    v_bruto = [linha_da_volta("bruto", v["volta"], v, preco, co2) for v in met_bruto["voltas"]]
+    v_agentes = [linha_da_volta("agentes", v["volta"], v, preco, co2) for v in met_agentes["voltas"]]
+    return montar_resultados(v_bruto, v_agentes, alvo), resumo_da_comparacao(v_bruto, v_agentes, alvo, preco, co2)
+
+
+def imprimir_resultados(tabela: pd.DataFrame, resumo: dict[str, Any]) -> None:
     print(tabela[tabela["tipo"] != "volta"].to_string(index=False), flush=True)
     if "extrapolacao" in resumo:
         e, dif = resumo["extrapolacao"], resumo["diferenca_pct"]
@@ -298,11 +324,50 @@ def main(argv: list[str] | None = None) -> int:
               f"(R$ {e['economia_r']:.2f}; {e['economia_co2_kg']:.1f} kg de CO2), "
               f"{e['eventos_sem_agentes']} x {e['eventos_com_agentes']} eventos bruscos, {e['tempo_extra_min']:+.1f} min.",
               flush=True)
-    log.info("Resultados em %s", pasta)
-    if not (res_bruto.completa and res_agentes.completa):
-        log.error("Alguma bateria não chegou ao fim (%s / %s): confira antes de usar os números.",
-                  res_bruto.motivo_fim, res_agentes.motivo_fim)
-        return 2
+
+
+def _no_resumo(arquivo: Path) -> str:
+    """Caminho relativo à raiz do repositório, quando dá: o resumo não guarda caminhos da máquina."""
+    try:
+        return Path(arquivo).resolve().relative_to(RAIZ).as_posix()
+    except ValueError:
+        return str(arquivo)
+
+
+def recalcular(pasta: Path, m: Montagem, alvo: int) -> int:
+    """Refaz o resultados.csv, o resumo.json e o comparativo.png de um benchmark salvo, a partir das telemetrias.
+
+    Não roda simulador nem agentes: aplica as métricas atuais (por exemplo, uma correção do medidor de
+    consumo) a um benchmark já feito no CARLA. As telemetrias e o decisoes.jsonl não mudam; o resumo
+    guarda os dados da corrida (data, LLM, decisões, fim de cada bateria) e marca o recálculo.
+    """
+    arquivos = {"bruto": pasta / "telemetria_sem_agentes.csv", "agentes": pasta / "telemetria_com_agentes.csv"}
+    faltando = [str(a) for a in arquivos.values() if not a.exists()]
+    if faltando:
+        log.error("Faltam as telemetrias do benchmark: %s", ", ".join(faltando))
+        return 1
+    arquivo_resumo = pasta / "resumo.json"
+    antigo = json.loads(arquivo_resumo.read_text(encoding="utf-8")) if arquivo_resumo.exists() else {}
+    res: dict[str, ResultadoConducao] = {}
+    for modo, arquivo in arquivos.items():
+        tabela_tel = pd.read_csv(arquivo, low_memory=False)
+        voltas = int(antigo.get("voltas") or int(tabela_tel["volta"].max()) + 1)
+        res[modo] = ResultadoConducao(modo=modo, simulador=str(antigo.get("simulador") or "?"), voltas=voltas,
+                                      linhas=tabela_tel.to_dict("records"),
+                                      motivo_fim=str((antigo.get("fim") or {}).get(NOMES_MODO[modo], "")))
+    tabela, comparacao = calcular_resultados(res["bruto"], res["agentes"], m, alvo)
+    tabela.to_csv(pasta / "resultados.csv", index=False)
+    figura = desenhar(pasta, res["bruto"], res["agentes"], m.plano.comprimento, tabela)
+    resumo = {
+        **antigo, "modelo_consumo": MODELO_CONSUMO, **comparacao,
+        "arquivos": {"resultados": _no_resumo(pasta / "resultados.csv"), "figura": _no_resumo(figura) if figura else None},
+        "recalculado_em": datetime.now().isoformat(timespec="seconds"),
+        "recalculo": ("métricas refeitas a partir das telemetrias salvas (python -m mover.autonomo.benchmark --recalcular); "
+                      "as colunas combustivel_ml, custo_r e co2_g das telemetrias continuam as do medidor usado na corrida"),
+    }
+    arquivo_resumo.write_text(json.dumps(resumo, ensure_ascii=False, indent=2), encoding="utf-8")
+    imprimir_resultados(tabela, resumo)
+    log.info("Resultados recalculados em %s", pasta)
     return 0
 
 

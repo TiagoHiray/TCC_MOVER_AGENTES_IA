@@ -246,7 +246,7 @@ class Decisor:
         """
         if plano is None or not plano.pendentes:
             return None
-        inicio = time.monotonic()
+        inicio = time.perf_counter()  # perf_counter: no Windows, o monotonic() do Python <= 3.12 anda de 15,6 em 15,6 ms
         t0, d0, v0, a0 = (float(plano.estado[k]) for k in ("t", "d", "v", "a"))
         pendentes = plano.pendentes
         trajetorias: dict[str, Trajetoria] = {"nenhuma": plano.trajetoria}
@@ -277,7 +277,7 @@ class Decisor:
         decisao.texto = self.texto_modelo(decisao)
         decisao.trajetorias = trajetorias
         decisao.atualizar_curvas()
-        decisao.latencia_s = time.monotonic() - inicio
+        decisao.latencia_s = time.perf_counter() - inicio
         return decisao
 
     def supervisionar(self, decisao: Decisao) -> Decisao:
@@ -287,11 +287,11 @@ class Decisor:
         """
         if self.llm is None or not decisao.brutas:
             return decisao
-        inicio = time.monotonic()
+        inicio = time.perf_counter()
         self._perguntar_llm(decisao)
         if decisao.origem == "llm":
             decisao.atualizar_curvas()
-        decisao.latencia_llm_s = time.monotonic() - inicio
+        decisao.latencia_llm_s = time.perf_counter() - inicio
         decisao.latencia_s += decisao.latencia_llm_s
         return decisao
 
