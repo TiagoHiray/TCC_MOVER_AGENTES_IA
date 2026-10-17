@@ -1,0 +1,96 @@
+{
+  "data": "2026-10-17T13:53:30",
+  "simulador": "carla",
+  "voltas": 3,
+  "combustivel": "diesel",
+  "preco_r_l": 6.0,
+  "co2_kg_l": 2.68,
+  "modelo_consumo": "VT-CPFM sobre a velocidade medida: potência pela energia cinética da velocidade suavizada (média de dois ticks e média móvel exponencial de 0.16 s) mais arrasto, rolamento e rampa; o mesmo medidor do painel",
+  "llm_decisoes": "ollama:gemma2:2b",
+  "suavizador_ml": "floresta aleatória (2000 situações simuladas)",
+  "agentes_http": "http://127.0.0.1:58613",
+  "requisicoes_agentes": 36,
+  "decisoes": 34,
+  "decisoes_por_origem": {
+    "llm": 29,
+    "regra": 5
+  },
+  "opcoes": {
+    "ml": 34
+  },
+  "fim": {
+    "sem_agentes": "chegada",
+    "com_agentes": "chegada"
+  },
+  "sem_agentes": {
+    "voltas": 3,
+    "por_volta": {
+      "tempo_s": 176.283,
+      "distancia_m": 780.233,
+      "vel_media_kmh": 15.933,
+      "combustivel_ml": 312.267,
+      "custo_r": 1.874,
+      "co2_g": 836.867,
+      "eventos_atencao": 3.333,
+      "eventos_criticos": 22.667,
+      "eventos_total": 26.0,
+      "jerk_max_mps3": 54.8,
+      "acel_min_mps2": -13.607,
+      "acel_max_mps2": 6.147,
+      "energia_freio_wh": 495.433
+    },
+    "total": {
+      "tempo_s": 528.85,
+      "combustivel_ml": 936.8,
+      "custo_r": 5.621,
+      "co2_g": 2510.6,
+      "eventos_total": 78.0
+    }
+  },
+  "com_agentes": {
+    "voltas": 3,
+    "por_volta": {
+      "tempo_s": 188.733,
+      "distancia_m": 779.867,
+      "vel_media_kmh": 14.877,
+      "combustivel_ml": 268.747,
+      "custo_r": 1.613,
+      "co2_g": 720.233,
+      "eventos_atencao": 3.667,
+      "eventos_criticos": 5.0,
+      "eventos_total": 8.667,
+      "jerk_max_mps3": 24.103,
+      "acel_min_mps2": -3.637,
+      "acel_max_mps2": 6.433,
+      "energia_freio_wh": 357.0
+    },
+    "total": {
+      "tempo_s": 566.2,
+      "combustivel_ml": 806.24,
+      "custo_r": 4.838,
+      "co2_g": 2160.7,
+      "eventos_total": 26.0
+    }
+  },
+  "diferenca_pct": {
+    "combustivel_ml": -13.94,
+    "tempo_s": 7.06,
+    "eventos_total": -66.67,
+    "energia_freio_wh": -27.94
+  },
+  "extrapolacao": {
+    "voltas": 100,
+    "litros_sem_agentes": 30.89,
+    "litros_com_agentes": 26.69,
+    "economia_l": 4.2,
+    "economia_r": 25.21,
+    "economia_co2_kg": 11.26,
+    "eventos_sem_agentes": 2503,
+    "eventos_com_agentes": 802,
+    "tempo_extra_min": 20.3
+  },
+  "arquivos": {
+    "resultados": "data/benchmark/20261017_135143/resultados.csv",
+    "figura": "data/benchmark/20261017_135143/comparativo.png"
+  }
+}
