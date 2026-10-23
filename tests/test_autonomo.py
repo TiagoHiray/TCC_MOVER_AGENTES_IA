@@ -177,23 +177,156 @@ def test_volta_automatica_numa_cidade_contorna_quarteiroes_sem_ir_e_voltar_pela_
         volta_automatica(faixas, grafo, 5000.0, 4000.0, 6000.0, juncoes)
 
 
-def test_apresentacao_seco_monta_benchmark_e_volta_gravada_de_cada_cenario(capsys, tmp_path):
+def test_apresentacao_seco_cruza_as_situacoes_do_mapa_com_os_modos(capsys, tmp_path):
     from mover.autonomo import apresentacao
 
     assert apresentacao.main(["--seco", "--mapa", "campus", "--saida", str(tmp_path / "a")]) == 0
     plano = json.loads(capsys.readouterr().out)
-    cenarios = {c["id"]: c for c in plano["cenarios"]}
-    assert set(cenarios) == {c.id for c in apresentacao.CENARIOS}
-    assert "--sem-agentes" in cenarios["so_carla"]["corrida"] and "completo" in cenarios["so_carla"]["benchmark"]
-    assert {"--sem-ml", "--sem-llm"} <= set(cenarios["so_regra"]["benchmark"]) and "--sem-llm" in cenarios["so_ml"]["corrida"]
-    assert "--sem-ml" in cenarios["so_llm"]["corrida"] and "--sem-llm" not in cenarios["so_llm"]["corrida"]
-    assert "config/missao_cruzeiro20.yaml" in cenarios["devagar_20"]["benchmark"]
-    assert all("--sem-navegador" in c["corrida"] for c in cenarios.values())
-    # Town10 no --seco: só os caminhos, sem tocar no CARLA nem escrever as configs
-    assert apresentacao.main(["--seco", "--cenarios", "so_carla", "--saida", str(tmp_path / "t")]) == 0
+    modos = {m["id"]: m for m in plano["modos"]}
+    assert set(modos) == {m.id for m in apresentacao.MODOS}
+    assert "--sem-agentes" in modos["so_carla"]["corrida"] and "completo" in modos["so_carla"]["benchmark"]
+    assert {"--sem-ml", "--sem-llm"} <= set(modos["so_regra"]["benchmark"]) and "--sem-llm" in modos["so_ml"]["corrida"]
+    assert "--sem-ml" in modos["so_llm"]["corrida"] and "--sem-llm" not in modos["so_llm"]["corrida"]
+    assert modos["devagar_20"]["benchmark"][modos["devagar_20"]["benchmark"].index("--missao") + 1].endswith(
+        "missao_cruzeiro20.yaml")
+    assert all("--sem-navegador" in m["corrida"] for m in modos.values())
+    assert [s["id"] for s in plano["situacoes"]] == ["curva", "pedestre", "veiculo", "lombada", "parada"]
+    assert not (tmp_path / "a").exists()
+    # Town10 no --seco: sem tocar no CARLA nem escrever nada; as situações saem depois de exportar o mapa
+    assert apresentacao.main(["--seco", "--modos", "so_carla", "--saida", str(tmp_path / "t")]) == 0
     plano = json.loads(capsys.readouterr().out)
-    assert [c["id"] for c in plano["cenarios"]] == ["so_carla", "completo"]  # o benchmark do so_carla é o do completo
-    assert plano["configs"]["config_simulacao"].endswith("simulacao_town10.yaml") and not (tmp_path / "t").exists()
+    assert [m["id"] for m in plano["modos"]] == ["so_carla", "completo"]  # a bateria sem agentes é a do completo
+    assert plano["configs"]["config_simulacao"].endswith("simulacao.yaml") and not (tmp_path / "t").exists()
+
+
+def _janelas_separadas(sits, L):
+    marcas = np.zeros(int(L) + 1, int)
+    for s in sits:
+        largura = (s.s_fim - s.s_ini) % L
+        marcas[(np.arange(int(s.s_ini) + 1, int(s.s_ini + largura))) % len(marcas)] += 1
+    return marcas.max() <= 1
+
+
+def test_situacoes_do_campus_ficam_separadas_e_criam_a_faixa_quando_o_mapa_nao_tem():
+    from mover.autonomo.situacoes import escolher_situacoes, figurantes_do_cenario
+
+    plano = PlanoMissao.carregar(caminho("config/missao.yaml"))
+    L = plano.comprimento
+    sits = {s.id: s for s in escolher_situacoes(plano)}
+    assert list(sits) == ["curva", "pedestre", "veiculo", "lombada", "parada"] and _janelas_separadas(sits.values(), L)
+    assert sits["curva"].s_ini < sits["curva"].s_fim < L - 40  # longe da chegada: a volta do vídeo não está parando
+    pedestre = sits["pedestre"].figurantes["pedestres"][0]["s_m"]
+    assert any(z.tipo == "faixa" and z.s_ini <= pedestre <= z.s_fim for z in plano.zonas)
+    veiculo = sits["veiculo"].figurantes["veiculos"][0]
+    assert (sits["veiculo"].s_fim - sits["veiculo"].s_ini) % L >= 120 and veiculo["percurso_m"] > 50
+    cenario = figurantes_do_cenario(list(sits.values()))
+    assert len(cenario["pedestres"]) == 1 and len(cenario["veiculos"]) == 1
+
+    sem_faixa = PlanoMissao.carregar(caminho("config/missao.yaml"))
+    sem_faixa.zonas = [z for z in sem_faixa.zonas if z.tipo != "faixa"]
+    sits = {s.id: s for s in escolher_situacoes(sem_faixa)}
+    criada = [z for z in sem_faixa.zonas if z.id == "faixa_cenario"]
+    assert len(criada) == 1 and criada[0].s_ini <= sits["pedestre"].figurantes["pedestres"][0]["s_m"] <= criada[0].s_fim
+    assert _janelas_separadas(sits.values(), L)
+
+
+def test_metricas_e_recorte_de_cada_situacao_saem_da_telemetria(tmp_path):
+    from mover.autonomo import apresentacao
+    from mover.autonomo.situacoes import Situacao, metricas_situacao
+
+    L, dt = 200.0, 0.05
+    t = np.arange(0.0, 2 * L / 5.0 + 1.0, dt)
+    tel = pd.DataFrame({"sim_time": t, "d": np.minimum(5.0 * t, 2 * L), "speed_mps": 5.0, "acc_long": 0.0,
+                        "combustivel_ml": t, "t_parede": 1000.0 + 1.5 * t})
+    tel["volta"] = np.minimum(tel["d"] // L, 1).astype(int)
+    meio, largada = Situacao("meio", "meio", "?", 50.0, 90.0), Situacao("largada", "largada", "?", 180.0, 20.0)
+    lim = Limiares()
+    met = metricas_situacao(tel, meio, L, lim)
+    assert met["voltas"] == 2 and met["tempo_s"] == pytest.approx(8.0, abs=0.1) and met["eventos"] == 0
+    assert metricas_situacao(tel, largada, L, lim)["voltas"] == 1  # a segunda volta termina na chegada
+    trechos = apresentacao.trechos_do_video(tel, [meio, largada], L, t_gravacao=1005.0)
+    assert trechos["meio"] == pytest.approx((6.0, 20.0), abs=0.1)  # 4 s antes e depois, no relógio de parede
+    assert trechos["largada"][0] == pytest.approx(1000 + 1.5 * 36 - 1005 - 4, abs=0.1)
+
+    modos = [m for m in apresentacao.MODOS if m.id in ("so_carla", "completo")]
+    pastas = {"completo": tmp_path / "modos" / "05_completo", "so_carla": tmp_path / "modos" / "01_so_carla"}
+    (pastas["completo"] / "benchmark").mkdir(parents=True)
+    tel.to_csv(pastas["completo"] / "benchmark" / "telemetria_sem_agentes.csv", index=False)
+    (pastas["completo"] / "benchmark" / "resumo.json").write_text(json.dumps(
+        {"sem_agentes": {"por_volta": {"tempo_s": 40.0, "combustivel_ml": 40.0, "eventos_total": 0}}}), encoding="utf-8")
+    videos = {("meio", "so_carla"): str(tmp_path / "situacoes" / "meio" / "01_so_carla.mp4")}
+    linhas = apresentacao.matriz(modos, [meio], L, pastas, lim, videos)
+    so_carla = {l["situacao"]: l for l in linhas if l["modo"] == "so_carla"}
+    assert so_carla["meio"]["tempo_s"] == pytest.approx(8.0, abs=0.1) and so_carla["volta"]["diesel_ml"] == 40.0
+    assert all(l["tempo_s"] == "" for l in linhas if l["modo"] == "completo" and l["situacao"] == "meio")
+    apresentacao.escrever_indice(tmp_path, linhas, [meio], modos, "teste", 3)
+    texto = (tmp_path / "indice.md").read_text(encoding="utf-8")
+    assert "## 1. meio" in texto and "[ver](situacoes/meio/01_so_carla.mp4)" in texto and "Só o CARLA" in texto
+
+
+class _AtorFalso:
+    def __init__(self, x, y):
+        self.local = type("L", (), {"x": x, "y": y})()
+        self.destruido, self.controle = False, None
+
+    def get_location(self):
+        return self.local
+
+    def apply_control(self, controle):
+        self.controle = controle
+
+    def set_autopilot(self, *args):
+        pass
+
+    def destroy(self):
+        self.destruido = True
+
+
+def test_figurantes_disparam_uma_vez_por_volta_e_saem_depois_da_situacao():
+    from types import SimpleNamespace
+
+    from mover.autonomo.figurantes import Figurantes
+    from mover.autonomo.rota import para_carla
+
+    criados = []
+
+    def spawn(bp, tf):
+        criados.append((bp.id, _AtorFalso(tf.location.x, tf.location.y)))
+        return criados[-1][1]
+
+    bp = lambda nome: SimpleNamespace(id=nome, has_attribute=lambda _: False)  # noqa: E731
+    mundo = SimpleNamespace(get_blueprint_library=lambda: SimpleNamespace(find=bp), try_spawn_actor=spawn)
+    carla = SimpleNamespace(Location=lambda **k: SimpleNamespace(**k), Rotation=lambda **k: SimpleNamespace(**k),
+                            Transform=lambda local, rot: SimpleNamespace(location=local, rotation=rot),
+                            WalkerControl=SimpleNamespace, Vector3D=lambda *v: v)
+    caminhos = []
+    tm = SimpleNamespace(get_port=lambda: 8100, auto_lane_change=lambda *a: None, ignore_lights_percentage=lambda *a: None,
+                         ignore_signs_percentage=lambda *a: None, set_desired_speed=lambda *a: None,
+                         set_path=lambda ator, pontos, vazio: caminhos.append(pontos))
+    rota = plano_estadio().rota
+    L = rota.comprimento
+    fig = Figurantes(carla, mundo, tm, rota, {"pedestres": [{"s_m": 100.0, "gatilho_m": 30.0}],
+                                              "veiculos": [{"s_m": 150.0, "a_frente_m": 20.0, "percurso_m": 40.0}]},
+                     lambda x, y: 0.0, lambda a, b: [a, b])
+    assert fig.atualizar(60.0, 0.0, 0.0) is None and not criados
+    assert fig.atualizar(71.0, 0.0, 0.0) is not None and [c[0] for c in criados] == ["walker.pedestrian.0001"]
+    p = rota.ponto(100.0)
+    xc, yc, _ = para_carla(p.x, p.y, p.rumo)
+    pedestre = criados[0][1]
+    assert math.hypot(pedestre.local.x - xc, pedestre.local.y - yc) == pytest.approx(6.0, abs=0.05)
+    assert pedestre.controle.speed == 1.0
+    fig.atualizar(80.0, 0.0, 0.0)
+    assert len(criados) == 1  # uma vez por volta
+    fig.atualizar(126.0, 0.0, 0.0)
+    assert pedestre.destruido and not fig.ativos  # passou da faixa
+    fig.atualizar(149.0, 0.0, 0.0)
+    assert criados[-1][0] == "vehicle.tesla.model3" and caminhos == [[177.0, 249.0]]
+    fig.atualizar(240.0, 0.0, 0.0)
+    assert criados[-1][1].destruido
+    fig.atualizar(L + 71.0, 0.0, 0.0)
+    assert len(criados) == 3 and criados[-1][0] == "walker.pedestrian.0001"  # a volta seguinte
+    fig.limpar()
+    assert criados[-1][1].destruido and not fig.ativos
 
 
 # ---------------------------------------------------------------------------------------------

@@ -33,6 +33,7 @@ from typing import Any, Callable
 import numpy as np
 
 from mover.autonomo.conducao import FimDoSimulador
+from mover.autonomo.figurantes import Figurantes
 from mover.autonomo.rota import Rota, de_carla, para_carla
 from mover.config import caminho
 # from mover.autonomo.xodr_carla import preparar_para_carla  # preparos do mapa_final.xodr (desligados)
@@ -131,6 +132,8 @@ class SimuladorCarla:
             self.ccam["modo"] = camera
         self.ccam_painel = {**PADRAO_CAMERA_PAINEL, **(cfg_simulacao.get("camera_painel") or {})}
         self.ctm = {**PADRAO_TM, **(cfg_tm or {})}
+        self.cfg_cenario = cfg_simulacao.get("cenario") or {}
+        self.figurantes: Figurantes | None = None
         self.texto_xodr = texto_xodr
         self.sem_render = sem_render
         self.manter_mundo = manter_mundo or not self.cc.get("carregar_mapa", True)
@@ -353,6 +356,8 @@ class SimuladorCarla:
         self.tm.set_desired_speed(self.ator, 0.0)
         self._d = 0.0
         self._definir_caminho(0.0)
+        if self.cfg_cenario.get("pedestres") or self.cfg_cenario.get("veiculos"):
+            self.figurantes = Figurantes(carla, self.world, self.tm, self.rota, self.cfg_cenario, self._z, self._pontos_caminho)
         if self._enviar_quadro is not None and self.ccam_painel.get("ativa", True) and not self.sem_render:
             painel = CameraPainel(self.ccam_painel, self._enviar_quadro)
             try:
@@ -395,23 +400,27 @@ class SimuladorCarla:
         Vai de uma vez só: renovar no meio da corrida esvazia o buffer do TM, que relocaliza o caminhão pelo
         waypoint mais próximo e, perto de uma junção, pode pegar outra faixa e sair da rota.
         """
-        carla = self.carla
         L = self.rota.comprimento
-        passo = float(self.ctm["passo_caminho_m"])
         self._horizonte_caminho = float(self.ctm["horizonte_caminho_m"])
         fim = min(self.voltas * L + 30.0, d + self._horizonte_caminho)  # passa da chegada: o governador para antes
-        pontos = []
-        dist = d + float(self.ctm["inicio_caminho_m"])
-        while dist < fim:
+        pontos = self._pontos_caminho(d + float(self.ctm["inicio_caminho_m"]), fim)
+        self.tm.set_path(self.ator, pontos, True)
+        self._caminho_ate = fim
+        log.debug("Caminho do TM: %d pontos de d = %.0f a %.0f m.", len(pontos), d, fim)
+
+    def _pontos_caminho(self, d_ini: float, d_fim: float) -> list[Any]:
+        """Pontos da rota para o set_path, a cada passo_caminho_m, sem os que caem dentro de junções."""
+        carla = self.carla
+        passo = float(self.ctm["passo_caminho_m"])
+        pontos, dist = [], d_ini
+        while dist < d_fim:
             p = self.rota.ponto(dist)
             x, y, _ = para_carla(p.x, p.y, p.rumo)
             local = carla.Location(x=x, y=y, z=self._z(x, y))
             if not self._dentro_de_juncao(local):
                 pontos.append(local)
             dist += passo
-        self.tm.set_path(self.ator, pontos, True)
-        self._caminho_ate = fim
-        log.debug("Caminho do TM: %d pontos de d = %.0f a %.0f m.", len(pontos), d, fim)
+        return pontos
 
     def _dentro_de_juncao(self, local: Any) -> bool:
         """Pontos dentro de jun\u00e7\u00f5es ficam fora do caminho do TM.
@@ -427,6 +436,9 @@ class SimuladorCarla:
         return bool(getattr(wp, "is_junction", False)) if wp is not None else False
 
     def _remover_caminhao(self) -> None:
+        if self.figurantes is not None:
+            self.figurantes.limpar()
+            self.figurantes = None
         if self.camera_painel is not None:
             self.camera_painel.encerrar()
             self.camera_painel = None
@@ -516,6 +528,7 @@ class SimuladorCarla:
         linha = {
             "frame": self.frame,
             "sim_time": round(t, 4),
+            "t_parede": round(time.time(), 3),  # relógio do computador: recorte do vídeo gravado da tela
             "hora_local": (self.hora_inicio + timedelta(seconds=t)).isoformat(timespec="milliseconds"),
             "x": x, "y": y, "z": float(tf.location.z),
             "rumo_graus": math.degrees(rumo),
@@ -540,6 +553,8 @@ class SimuladorCarla:
                 linha["rpm"], linha["gear"] = float(dados.engine_rpm), int(dados.gear)
             except (RuntimeError, AttributeError):
                 pass
+        if self.figurantes is not None:
+            linha["dist_figurante_m"] = self.figurantes.atualizar(self._d, float(tf.location.x), float(tf.location.y))
         if not self.sem_render:
             self._camera_simulador(tf)
         self._ultima = linha
