@@ -136,6 +136,64 @@ def test_plano_do_mapa_real_tem_as_lombadas_e_faixas_do_proprio_mapa():
     assert len(no_mapa) == 6 and len(lombadas) == 4 and all("do mapa" in z.origem for z in lombadas)
     assert sum(z.tipo == "faixa" for z in plano.zonas) >= 4 and [p.id for p in plano.paradas] == ["portao_1"]
     assert plano.sentido == "anti-horário" and plano.mapa.endswith("campus_maua.xodr")
+    # sem itinerário (mapas como o Town10HD): a volta automática acha o mesmo anel de ~784 m
+    automatico = gerar(cfg_sim, {**cfg_auto["gerar_missao"], "rota": {"vias": "auto", "alvo_m": 784.0}})
+    assert automatico.comprimento == pytest.approx(plano.comprimento, abs=3.0)
+    assert "1, 5, 2, 6, achadas automaticamente" in automatico.observacoes[0]
+
+
+def test_volta_automatica_numa_cidade_contorna_quarteiroes_sem_ir_e_voltar_pela_mesma_rua():
+    from mover.autonomo.rota_mapa import largada_automatica, volta_automatica
+
+    # grade de 4 x 4 cruzamentos a cada 100 m, ruas de mão dupla e conectores (junções) em cada cruzamento
+    faixas, juncoes, via, chegadas, saidas = {}, set(), 1, {}, {}
+    for i in range(4):
+        for j in range(4):
+            for dx, dy in ((1, 0), (0, 1)):
+                if i + dx > 3 or j + dy > 3:
+                    continue
+                for sentido in (1, -1):
+                    ux, uy = dx * sentido, dy * sentido
+                    a, b = ((i, j), (i + dx, j + dy)) if sentido == 1 else ((i + dx, j + dy), (i, j))
+                    lado = np.array([uy, -ux]) * 1.75  # mão à direita
+                    p0 = np.array(a) * 100.0 + np.array([ux, uy]) * 10.0 + lado
+                    p1 = np.array(b) * 100.0 - np.array([ux, uy]) * 10.0 + lado
+                    faixas[(via, 0)] = Faixa(via, 0, _reta(tuple(p0), tuple(p1)))
+                    saidas[(a, (ux, uy))], chegadas[(b, (ux, uy))] = (via, 0), (via, 0)
+                    via += 1
+    for (no, d_in), entra in chegadas.items():
+        for (no2, d_out), sai in saidas.items():
+            if no2 == no and d_out != (-d_in[0], -d_in[1]):
+                faixas[(via, 0)] = Faixa(via, 0, _reta(tuple(faixas[entra].fim), tuple(faixas[sai].inicio), 0.5))
+                juncoes.add(via)
+                via += 1
+    grafo = grafo_de_faixas(faixas)
+    for alvo, quarteiroes in ((400.0, 1), (800.0, 2)):
+        seq = volta_automatica(faixas, grafo, alvo, 300.0, 1500.0, juncoes)
+        rota = rota_do_itinerario(faixas, seq, largada_automatica(faixas, seq, juncoes))
+        ruas = [v for v, _ in seq if v not in juncoes]
+        assert rota.comprimento == pytest.approx(alvo, rel=0.06) and len(ruas) == 4 * quarteiroes == len(set(ruas))
+    with pytest.raises(ValueError):
+        volta_automatica(faixas, grafo, 5000.0, 4000.0, 6000.0, juncoes)
+
+
+def test_apresentacao_seco_monta_benchmark_e_volta_gravada_de_cada_cenario(capsys, tmp_path):
+    from mover.autonomo import apresentacao
+
+    assert apresentacao.main(["--seco", "--mapa", "campus", "--saida", str(tmp_path / "a")]) == 0
+    plano = json.loads(capsys.readouterr().out)
+    cenarios = {c["id"]: c for c in plano["cenarios"]}
+    assert set(cenarios) == {c.id for c in apresentacao.CENARIOS}
+    assert "--sem-agentes" in cenarios["so_carla"]["corrida"] and "completo" in cenarios["so_carla"]["benchmark"]
+    assert {"--sem-ml", "--sem-llm"} <= set(cenarios["so_regra"]["benchmark"]) and "--sem-llm" in cenarios["so_ml"]["corrida"]
+    assert "--sem-ml" in cenarios["so_llm"]["corrida"] and "--sem-llm" not in cenarios["so_llm"]["corrida"]
+    assert "config/missao_cruzeiro20.yaml" in cenarios["devagar_20"]["benchmark"]
+    assert all("--sem-navegador" in c["corrida"] for c in cenarios.values())
+    # Town10 no --seco: só os caminhos, sem tocar no CARLA nem escrever as configs
+    assert apresentacao.main(["--seco", "--cenarios", "so_carla", "--saida", str(tmp_path / "t")]) == 0
+    plano = json.loads(capsys.readouterr().out)
+    assert [c["id"] for c in plano["cenarios"]] == ["so_carla", "completo"]  # o benchmark do so_carla é o do completo
+    assert plano["configs"]["config_simulacao"].endswith("simulacao_town10.yaml") and not (tmp_path / "t").exists()
 
 
 # ---------------------------------------------------------------------------------------------

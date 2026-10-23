@@ -195,6 +195,78 @@ def rota_do_itinerario(faixas: dict[tuple[int, int], Faixa], sequencia: list[tup
     return rota
 
 
+def _distancias(origem: tuple[int, int], vizinhos: dict[tuple[int, int], list[tuple[int, int]]],
+                custo: dict[tuple[int, int], float]) -> tuple[dict, dict]:
+    """Dijkstra a partir da origem; o passo de u para v custa custo[v] (sem a origem)."""
+    dist, anterior, fila = {origem: 0.0}, {origem: None}, [(0.0, origem)]
+    while fila:
+        c, u = heapq.heappop(fila)
+        if c > dist[u]:
+            continue
+        for v in vizinhos.get(u, ()):
+            novo = c + custo[v]
+            if novo < dist.get(v, math.inf):
+                dist[v], anterior[v] = novo, u
+                heapq.heappush(fila, (novo, v))
+    return dist, anterior
+
+
+def volta_automatica(faixas: dict[tuple[int, int], Faixa], grafo: dict[tuple[int, int], list[tuple[int, int]]],
+                     alvo_m: float = 800.0, min_m: float = 400.0, max_m: float = 1500.0,
+                     juncoes: set[int] | frozenset[int] = frozenset()) -> list[tuple[int, int]]:
+    """A volta fechada de comprimento mais perto do alvo, para mapas sem itinerário cadastrado (Town10HD).
+
+    Para cada faixa de partida a e faixa intermediária b, a volta é a -> b (caminho mais curto) -> a. Vale a
+    que não repete faixa nem via fora das junções (nada de ir e voltar pela mesma rua).
+    """
+    comp = {k: f.comprimento for k, f in faixas.items()}
+    reverso: dict[tuple[int, int], list[tuple[int, int]]] = {k: [] for k in faixas}
+    for a, seguintes in grafo.items():
+        for b in seguintes:
+            reverso[b].append(a)
+    melhor: tuple[float, list[tuple[int, int]]] | None = None
+    partidas = sorted(k for k in faixas if k[0] not in juncoes and comp[k] >= 15.0)
+    for a in partidas:
+        ida, ant_ida = _distancias(a, grafo, comp)  # inclui b
+        volta, ant_volta = _distancias(a, reverso, comp)  # de b até a andando ao contrário: inclui b, não a
+        candidatas = []
+        for b, d_ida in ida.items():
+            if b == a or b not in volta:
+                continue
+            total = comp[a] + d_ida + volta[b] - comp[b]
+            if min_m <= total <= max_m:
+                candidatas.append((abs(total - alvo_m), b))
+        for erro, b in sorted(candidatas)[:25]:
+            if melhor is not None and erro >= melhor[0]:
+                break
+            caminho_ida, no = [], b
+            while no is not None and no != a:
+                caminho_ida.append(no)
+                no = ant_ida[no]
+            caminho_volta, no = [], ant_volta.get(b)
+            while no is not None and no != a:
+                caminho_volta.append(no)
+                no = ant_volta[no]
+            ciclo = [a, *reversed(caminho_ida), *caminho_volta]
+            # trechos seguidos da mesma via (seções de faixa) contam uma vez; a mesma via de novo = ida e volta
+            vias_fora = [v for i, (v, _) in enumerate(ciclo) if v not in juncoes and v != ciclo[i - 1][0]]
+            if len(set(ciclo)) == len(ciclo) and len(set(vias_fora)) == len(vias_fora):
+                melhor = (erro, ciclo)
+                break
+    if melhor is None:
+        raise ValueError(f"nenhuma volta fechada entre {min_m:.0f} e {max_m:.0f} m no grafo de faixas do mapa")
+    return melhor[1]
+
+
+def largada_automatica(faixas: dict[tuple[int, int], Faixa], sequencia: list[tuple[int, int]],
+                       juncoes: set[int] | frozenset[int] = frozenset()) -> tuple[float, float]:
+    """Um quarto do caminho na faixa mais longa fora das junções: o caminhão sai numa reta."""
+    chave = max((k for k in sequencia if k[0] not in juncoes), key=lambda k: faixas[k].comprimento)
+    pts = faixas[chave].pontos
+    p = pts[len(pts) // 4]
+    return float(p[0]), float(p[1])
+
+
 def rota_do_mapa(mapa: MapaOpenDrive, vias: list[int], largada: tuple[float, float] | None = None,
                  passo_m: float = 1.0, suavizar_m: float = 4.0, tolerancia_m: float = 1.0) -> tuple[Rota, list[tuple[int, int]]]:
     """Rota fechada da volta a partir do itinerário de vias do mapa. Devolve a rota e as faixas usadas."""

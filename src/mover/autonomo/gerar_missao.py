@@ -31,7 +31,8 @@ import numpy as np
 
 from mover.autonomo.missao import Parada, PlanoMissao, Zona
 from mover.autonomo.rota import Rota
-from mover.autonomo.rota_mapa import rota_do_mapa
+from mover.autonomo.rota_mapa import (faixas_do_mapa, grafo_de_faixas, largada_automatica, rota_do_itinerario,
+                                      rota_do_mapa, volta_automatica)
 from mover.config import caminho, carregar_yaml
 from mover.simulacao.opendrive import ler_xodr, linha_de_referencia
 from mover.simulacao.projecao import criar_projecao
@@ -40,7 +41,8 @@ log = logging.getLogger("mover.autonomo")
 
 PADRAO = {
     "cruzeiro_kmh": 30.0,
-    "rota": {"vias": [], "largada": None, "passo_m": 1.0, "suavizar_m": 4.0, "tolerancia_m": 1.0},
+    "rota": {"vias": [], "largada": None, "passo_m": 1.0, "suavizar_m": 4.0, "tolerancia_m": 1.0,
+             "alvo_m": 800.0, "min_m": 400.0, "max_m": 1500.0},  # alvo/min/max: só com vias: auto
     "lombadas": [],
     "portoes": [],
     "lombada": {"v_max_kmh": 10.0, "meia_largura_m": 8.0, "distancia_max_m": 10.0},
@@ -66,6 +68,12 @@ def sentido_da_volta(rota: Rota) -> str:
 # ---------------------------------------------------------------------------------------------
 # Elementos do plano
 # ---------------------------------------------------------------------------------------------
+def vias_de_juncao(arquivo: Path) -> set[int]:
+    """Ids das vias que são conectores de junção no .xodr."""
+    return {int(via.get("id")) for via in ET.parse(arquivo).getroot().findall("road")
+            if via.get("junction", "-1") not in ("-1", "") and str(via.get("id", "")).lstrip("-").isdigit()}
+
+
 def objetos_do_mapa(arquivo: Path, tipo: str) -> list[dict[str, Any]]:
     """Objetos OpenDRIVE de um tipo (speedBump, crosswalk...) com a posição (x, y) no mapa."""
     raiz = ET.parse(arquivo).getroot()
@@ -235,12 +243,25 @@ def gerar(cfg_sim: dict[str, Any], cfg_missao: dict[str, Any], texto_osm: str = 
                          "Veja os ids das vias com: python -m mover.autonomo.rota_mapa --figura vias.png")
     arquivo_mapa = cfg_sim["mapa"]["arquivo"]
     mapa = ler_xodr(caminho(arquivo_mapa), 0.5, tuple(cfg_sim["mapa"].get("tipos_faixa", ("driving",))))
-    rota, sequencia = rota_do_mapa(mapa, cr["vias"], tuple(cr["largada"]) if cr.get("largada") else None,
-                                   float(cr["passo_m"]), float(cr["suavizar_m"]), float(cr["tolerancia_m"]))
+    largada = tuple(cr["largada"]) if cr.get("largada") else None
+    if cr["vias"] == "auto":
+        juncoes = vias_de_juncao(caminho(arquivo_mapa))
+        faixas = faixas_do_mapa(mapa)
+        sequencia = volta_automatica(faixas, grafo_de_faixas(faixas, float(cr["tolerancia_m"])), float(cr["alvo_m"]),
+                                     float(cr["min_m"]), float(cr["max_m"]), juncoes)
+        rota = rota_do_itinerario(faixas, sequencia, largada or largada_automatica(faixas, sequencia, juncoes),
+                                  float(cr["passo_m"]), float(cr["suavizar_m"]))
+        itinerario = [v for i, (v, _) in enumerate(sequencia) if v not in juncoes and v != sequencia[i - 1][0]]
+        log.info("Volta automática: %.0f m pelas vias %s.", rota.comprimento, itinerario)
+    else:
+        rota, sequencia = rota_do_mapa(mapa, cr["vias"], largada, float(cr["passo_m"]), float(cr["suavizar_m"]),
+                                       float(cr["tolerancia_m"]))
+        itinerario = [int(x) for x in cr["vias"]]
     sentido = sentido_da_volta(rota)
-    conectores = [v for v, _ in sequencia if v not in set(int(x) for x in cr["vias"])]
+    conectores = [v for v, _ in sequencia if v not in set(itinerario)]
     observacoes = [
-        f"Rota tirada só do mapa do CARLA ({Path(arquivo_mapa).name}): itinerário de {len(cr['vias'])} vias "
+        f"Rota tirada só do mapa do CARLA ({Path(arquivo_mapa).name}): itinerário de {len(itinerario)} vias "
+        f"({', '.join(map(str, itinerario))}{', achadas automaticamente' if cr['vias'] == 'auto' else ''}) "
         f"e {len(conectores)} conectores de junção ({', '.join(map(str, conectores)) or 'nenhum'}), no centro das "
         f"faixas e no sentido de tráfego ({sentido}).",
     ]

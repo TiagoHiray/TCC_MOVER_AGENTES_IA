@@ -133,6 +133,7 @@ Com o ambiente virtual ativo, os módulos rodam a partir de `src/`.
 | Treino do modelo de ML | `python -m mover.agentes.suavizador_ml` |
 | Plano de missão a partir do mapa | `python -m mover.autonomo.gerar_missao` |
 | Análise da última corrida pela camada de logs | `python -m mover.agentes.rodar_agentes` |
+| Vídeos e benchmarks da apresentação (um cenário por pergunta, no Town10HD_Opt ou no campus) | `python -m mover.autonomo.apresentacao [--mapa campus] [--seco]` |
 
 Opções do `dirigir` e do `benchmark`:
 

@@ -196,6 +196,10 @@ class SimuladorCarla:
         if not self.manter_mundo and self.cc.get("mapa_carla"):
             self.world = carregar_mapa_instalado(self.client, str(self.cc["mapa_carla"]),
                                                  caminho(self.cc.get("pasta_xodr_carla") or "data/mapas"))
+            if self.texto_xodr and " ".join(self.opendrive_atual().split()) != " ".join(self.texto_xodr.split()):
+                log.warning("O .xodr do mapa instalado no CARLA difere do mapa da rota (mapa.arquivo em "
+                            "config/simulacao.yaml): a rota pode não bater com as vias. Copie o .xodr do pacote para "
+                            "data/mapas e rode python -m mover.autonomo.gerar_missao.")
         elif not self.manter_mundo:
             if not self.texto_xodr:
                 raise ValueError("sem o texto do .xodr para gerar o mundo")
