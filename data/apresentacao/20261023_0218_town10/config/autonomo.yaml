@@ -1,0 +1,107 @@
+missao:
+  arquivo: C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\apresentacao\20261023_0218_town10\config\missao.yaml
+  voltas: 1
+gerar_missao:
+  cruzeiro_kmh: 30
+  rota:
+    vias: auto
+    alvo_m: 800.0
+    min_m: 480.0
+    max_m: 1280.0
+    largada: null
+  lombadas: []
+  lombada:
+    v_max_kmh: 10
+    meia_largura_m: 8
+    distancia_max_m: 10
+  portoes: []
+  faixa:
+    v_max_kmh: 15
+    meia_largura_m: 6
+    distancia_max_m: 10
+  portao:
+    duracao_s: 4
+    distancia_max_m: 10
+  curva:
+    acel_lateral_max_mps2: 1.6
+    v_min_kmh: 10
+    folga_kmh: 2
+    antes_m: 5
+    juntar_m: 10
+veiculo:
+  massa_kg: 9000
+  area_frontal_m2: 7.5
+  cd: 0.65
+  cr: 0.008
+  potencia_max_kw: 180
+  forca_tracao_max_n: 18000
+  desacel_freio_max_mps2: 8.0
+  tau_motor_s: 0.3
+  tau_freio_s: 0.15
+piloto:
+  kp: 2.5
+  ki: 0.15
+  acelerador_max: 0.85
+  freio_max: 0.7
+governador:
+  desacel_bruta_mps2: 4.5
+  jerk_max_mps3: 1.6
+  avanco_s: 0.35
+  horizonte_m: 250
+opcoes:
+  economica:
+  - 0.6
+  - 0.5
+  - 22
+  suave:
+  - 0.8
+  - 0.6
+  - null
+  moderada:
+  - 1.2
+  - 0.9
+  - null
+  firme:
+  - 1.8
+  - 1.2
+  - null
+carla:
+  porta_tm: 8100
+  semente: 7
+  passo_caminho_m: 10
+  clima: ClearNoon
+  telemetria_motor: true
+  velocidade_minima_tm_kmh: 5.0
+corridas:
+  pasta: data/autonomo/corridas
+decisao:
+  horizonte_s: 10
+  prazo_llm_s: 6.0
+  valor_tempo_r_h: 30.0
+  max_tempo_extra_pct: 60
+  max_palavras: 45
+suavizador_ml:
+  ativo: true
+  modelo: data/modelos/suavizador_ml.joblib
+  situacoes: 2000
+  n_arvores: 200
+  semente: 7
+  processos: 0
+consumo:
+  combustivel: diesel
+  densidade_kg_l: 0.835
+  bsfc_g_kwh: 225
+  marcha_lenta_l_h: 2.0
+  eficiencia_transmissao: 0.88
+  potencia_quadratica_kw: 1000
+  preco_r_l: 6.0
+  co2_kg_l: 2.68
+limiares:
+  atencao_mps3: 2.5
+  critico_mps3: 5.0
+  agrupar_s: 1.0
+  fc_hz: 1.5
+benchmark:
+  voltas: 3
+  pasta: data/benchmark
+  extrapolar_voltas: 100

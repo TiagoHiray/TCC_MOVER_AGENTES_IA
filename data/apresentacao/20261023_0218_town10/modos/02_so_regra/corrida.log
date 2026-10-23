@@ -1,0 +1,36 @@
+INFO    Plano de missão: rota de 783 m (anti-horário), 6 zonas, 0 parada(s); 1 volta(s), modo agentes.
+INFO    Servidor do painel e dos agentes em http://127.0.0.1:8000 (página em http://127.0.0.1:8000/, log ao vivo em ws://127.0.0.1:8000/ws)
+INFO    Servidor do painel: http://127.0.0.1:8000
+INFO    Painel (simulação, gráficos, log e chat): http://127.0.0.1:8000/
+INFO    Servidor dos agentes: http://127.0.0.1:8000
+INFO    Abrindo a sessão dos agentes em http://127.0.0.1:8000 (na primeira vez o modelo de ML é treinado, ~1-2 min)...
+INFO    Agentes: 1 volta(s), LLM -, ML -.
+INFO    Agentes por HTTP: LLM - (só a regra), especialista de ML -.
+INFO    Mapa OpenDRIVE: 108 vias, 12153 pontos de centro de faixa (driving); geoReference: +proj=tmerc +lat_0=0 +lon_0=0 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +geoidgrids=egm96_15.gtx +vunits=m +no_defs; offset: None
+INFO    Cena recebida (piloto): 168 vias, rota de 783 m, 6 zonas e 0 paradas.
+INFO    CARLA 0.9.16 em localhost:2000
+INFO:  Found the required file in cache!  Carla/Maps/Nav/Town10HD_Opt.bin 
+INFO    Carregando o mapa Town10HD_Opt do CARLA (pode levar alguns segundos)...
+INFO:  Found the required file in cache!  Carla/Maps/Nav/Town10HD_Opt.bin 
+INFO    OpenDRIVE do mapa do CARLA (108 vias) salvo em C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\mapas\Town10HD_Opt_carla.xodr.
+INFO:  Found the required file in cache!  Carla/Maps/TM/Town10HD_Opt.bin 
+INFO    Topologia do CARLA: a rota de 783 m tem continuação em todas as faixas.
+INFO    Caminhão vehicle.carlamotors.european_hgv criado (id 431) na largada, com física.
+INFO    Física do caminhão no CARLA: massa_kg 7000, marchas 5, troca_marcha_s 0.1, cambio_automatico True, rpm_max 5730, amortecimento_sem_acelerador 2.0
+INFO    Câmera do painel: 640x360 a 10 fps, 12 m atrás e 5 m acima do caminhão.
+INFO    Supervisor com LLM ollama:gemma2:2b
+INFO    Sessão 20261023_025709: agentes, 1 volta(s), simulador carla, LLM das decisões regra, dos logs ollama:gemma2:2b
+INFO    Sessão 20261023_025709 aberta. Partindo!
+[   0.0 s] decisão do bloco 00: econômica (regra, 0.1 s) - O caminhão planeja arrancada brusca depois da partida em 0,1 s (1,6 m/s², jerk 3,4 m/s³) e mais 2 evento(s). Alteração econômica: desaceleração máxima de 0,6 m/s², 0 evento(s) bruscos e 17 mL a menos (+9,7 s).
+[  10.3 s] decisão do bloco 02: econômica (regra, 0.1 s) - O caminhão planeja frenagem brusca para a faixa de pedestre 2 em 21,1 s (-2,7 m/s², jerk -9,6 m/s³) e mais 1 evento(s). Alteração econômica: desaceleração máxima de 0,6 m/s², 0 evento(s) bruscos e 17 mL a menos (+1,5 s).
+INFO    Pedestre atravessando a faixa em s = 134 m da volta.
+[  40.1 s] decisão do bloco 05: econômica (regra, 0.2 s) - O caminhão planeja frenagem brusca para a faixa de pedestre 3 em 15,5 s (-3,3 m/s², jerk -10,2 m/s³) e mais 3 evento(s). Alteração econômica: desaceleração máxima de 0,6 m/s², 0 evento(s) bruscos e 31 mL a menos (+3,1 s).
+INFO    Veículo a 12 km/h à frente do caminhão em s = 349 m da volta, por 220 m.
+[ 140.3 s] decisão do bloco 15: econômica (regra, 0.2 s) - O caminhão planeja arrancada brusca depois da faixa de pedestre 5 em 0,1 s (1,6 m/s², jerk 3,7 m/s³) e mais 2 evento(s). Alteração econômica: desaceleração máxima de 0,6 m/s², 1 evento(s) bruscos e 9 mL a menos (+1,2 s).
+[ 150.3 s] decisão do bloco 16: econômica (regra, 0.2 s) - O caminhão planeja arrancada brusca depois da faixa de pedestre 6 em 0,1 s (1,8 m/s², jerk -3,4 m/s³) e mais 2 evento(s). Alteração econômica: desaceleração máxima de 0,6 m/s², 1 evento(s) bruscos e 18 mL a menos (+1,6 s).
+[ 170.2 s] decisão do bloco 18: firme (regra, 0.1 s) - O caminhão planeja frenagem brusca para a chegada em 15,7 s (-5,8 m/s², jerk -14,3 m/s³). Alteração firme: desaceleração máxima de 2,0 m/s², 0 evento(s) bruscos e 0 mL a menos (+1,6 s).
+INFO    Chegada (agentes): 1 volta(s) em 188 s de simulação, 188 s de relógio.
+Corrida agentes (carla, 1 volta(s), fim: chegada): 188.1 s, 779 m, 219 mL (R$ 1.31), eventos bruscos 4 de atenção e 7 críticos; 6 decisões (0 do LLM).
+INFO    Corrida gravada em C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\autonomo\corridas\20261023_025708_agentes
+INFO    Log da sessão: C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\autonomo\sessoes\sessao_20261023_025709.jsonl
+INFO    Corrida concluída. Painel e chat seguem em http://127.0.0.1:8000/ (Ctrl+C para sair).

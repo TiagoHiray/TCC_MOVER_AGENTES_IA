@@ -1,0 +1,44 @@
+INFO    Plano de missão: rota de 783 m (anti-horário), 6 zonas, 0 parada(s); 1 volta(s), modo agentes.
+INFO    Servidor do painel e dos agentes em http://127.0.0.1:8000 (página em http://127.0.0.1:8000/, log ao vivo em ws://127.0.0.1:8000/ws)
+INFO    Servidor do painel: http://127.0.0.1:8000
+INFO    Painel (simulação, gráficos, log e chat): http://127.0.0.1:8000/
+INFO    Servidor dos agentes: http://127.0.0.1:8000
+INFO    Abrindo a sessão dos agentes em http://127.0.0.1:8000 (na primeira vez o modelo de ML é treinado, ~1-2 min)...
+C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\.venv\Lib\site-packages\sklearn\base.py:525: InconsistentVersionWarning: Trying to unpickle estimator DecisionTreeRegressor from version 1.7.2 when using version 1.9.1. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\.venv\Lib\site-packages\sklearn\base.py:525: InconsistentVersionWarning: Trying to unpickle estimator RandomForestRegressor from version 1.7.2 when using version 1.9.1. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+INFO    LLM ollama:gemma2:2b pronto (aquecimento em 0.3 s).
+INFO    Agentes: 1 volta(s), LLM ollama:gemma2:2b, ML floresta aleatória (2000 situações simuladas).
+INFO    Agentes por HTTP: LLM ollama:gemma2:2b, especialista de ML floresta aleatória (2000 situações simuladas).
+INFO    Mapa OpenDRIVE: 108 vias, 12153 pontos de centro de faixa (driving); geoReference: +proj=tmerc +lat_0=0 +lon_0=0 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +geoidgrids=egm96_15.gtx +vunits=m +no_defs; offset: None
+INFO    Cena recebida (piloto): 168 vias, rota de 783 m, 6 zonas e 0 paradas.
+INFO    CARLA 0.9.16 em localhost:2000
+INFO:  Found the required file in cache!  Carla/Maps/Nav/Town10HD_Opt.bin 
+INFO    Carregando o mapa Town10HD_Opt do CARLA (pode levar alguns segundos)...
+INFO:  Found the required file in cache!  Carla/Maps/Nav/Town10HD_Opt.bin 
+INFO    OpenDRIVE do mapa do CARLA (108 vias) salvo em C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\mapas\Town10HD_Opt_carla.xodr.
+INFO:  Found the required file in cache!  Carla/Maps/TM/Town10HD_Opt.bin 
+INFO    Topologia do CARLA: a rota de 783 m tem continuação em todas as faixas.
+INFO    Caminhão vehicle.carlamotors.european_hgv criado (id 512) na largada, com física.
+INFO    Física do caminhão no CARLA: massa_kg 7000, marchas 5, troca_marcha_s 0.1, cambio_automatico True, rpm_max 5730, amortecimento_sem_acelerador 2.0
+INFO    Câmera do painel: 640x360 a 10 fps, 12 m atrás e 5 m acima do caminhão.
+INFO    Supervisor com LLM ollama:gemma2:2b
+INFO    Sessão 20261023_030853: agentes, 1 volta(s), simulador carla, LLM das decisões ollama:gemma2:2b, dos logs ollama:gemma2:2b
+INFO    Sessão 20261023_030853 aberta. Partindo!
+[   0.0 s] decisão do bloco 00: ajuste do ML (LLM, 1.1 s) - O caminhão planeja arrancada brusca depois da partida em 0,1 s (1,6 m/s², jerk 3,4 m/s³) e mais 2 evento(s). O ML suavizou: frear com até 0,8 m/s² e retomar com até 0,6 m/s²; 0 evento(s) bruscos e 6 mL a menos (+6,5 s).
+[  11.4 s] decisão do bloco 02: ajuste do ML (LLM, 1.4 s) - A recomendação do ML para suavizar a frenagem e a aceleração é a melhor opção, com 0 eventos bruscos e 21 mL a menos. O ML propôs frear com até 0,8 m/s² e retomar com até 0,6 m/s², até 18 km/h.
+INFO    Pedestre atravessando a faixa em s = 134 m da volta.
+[  41.5 s] decisão do bloco 05: ajuste do ML (LLM, 1.4 s) - O caminhão planeja frenagem brusca para a faixa de pedestre 3 em 16,9 s (-1,4 m/s², jerk -4,3 m/s³) e mais 1 evento(s). O ML suavizou: frear com até 0,7 m/s² e retomar com até 0,5 m/s², até 23 km/h; 0 evento(s) bruscos e 9 mL a menos (+0,7 s).
+[  51.4 s] decisão do bloco 06: ajuste do ML (regra, 1.4 s) - O caminhão planeja frenagem brusca para a faixa de pedestre 4 em 14,5 s (-3,0 m/s², jerk -10,5 m/s³) e mais 1 evento(s). O ML suavizou: frear com até 0,7 m/s² e retomar com até 0,5 m/s²; 0 evento(s) bruscos e 16 mL a menos (+1,6 s).
+INFO    Veículo a 12 km/h à frente do caminhão em s = 349 m da volta, por 220 m.
+[ 131.6 s] decisão do bloco 14: ajuste do ML (regra, 1.5 s) - O caminhão planeja arrancada brusca depois da faixa de pedestre 5 em 0,1 s (1,2 m/s², jerk 3,7 m/s³) e mais 2 evento(s). O ML suavizou: frear com até 0,8 m/s² e retomar com até 0,5 m/s², até 23 km/h; 1 evento(s) bruscos e 11 mL a menos (+1,8 s).
+[ 151.7 s] decisão do bloco 16: ajuste do ML (LLM, 1.6 s) - O caminhão planeja arrancada brusca depois da faixa de pedestre 6 em 0,1 s (3,5 m/s², jerk -10,3 m/s³) e mais 2 evento(s). O ML suavizou: frear com até 0,8 m/s² e retomar com até 0,6 m/s², até 18 km/h; 1 evento(s) bruscos e 22 mL a menos (+1,9 s).
+[ 171.3 s] decisão do bloco 18: ajuste do ML (LLM, 1.3 s) - O caminhão planeja frenagem suave para a chegada em 16,2 s (-1,2 m/s², jerk -14,4 m/s³). O ML suavizou: frear com até 1,0 m/s² e retomar com até 0,4 m/s²; 0 evento(s) bruscos e 0 mL a menos (+2,1 s).
+INFO    Chegada (agentes): 1 volta(s) em 188 s de simulação, 189 s de relógio.
+Corrida agentes (carla, 1 volta(s), fim: chegada): 188.1 s, 779 m, 230 mL (R$ 1.38), eventos bruscos 3 de atenção e 8 críticos; 7 decisões (5 do LLM).
+INFO    Corrida gravada em C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\autonomo\corridas\20261023_030852_agentes
+INFO    Log da sessão: C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\autonomo\sessoes\sessao_20261023_030853.jsonl
+INFO    Corrida concluída. Painel e chat seguem em http://127.0.0.1:8000/ (Ctrl+C para sair).

@@ -1,0 +1,37 @@
+[
+  {
+    "id": "pedestre",
+    "nome": "Pedestre atravessando na faixa",
+    "pergunta": "Como o caminhão se comporta com um pedestre atravessando?",
+    "s_ini": 73.5,
+    "s_fim": 158.5,
+    "figurantes": {
+      "pedestres": [
+        {
+          "s_m": 133.5,
+          "gatilho_m": 30.0,
+          "lado_m": 6.0,
+          "atravessar_m": 14.0,
+          "velocidade_mps": 1.0
+        }
+      ]
+    }
+  },
+  {
+    "id": "veiculo",
+    "nome": "Veículo lento à frente (12 km/h)",
+    "pergunta": "Como o caminhão se comporta com outro veículo à frente?",
+    "s_ini": 311.0,
+    "s_fim": 566.0,
+    "figurantes": {
+      "veiculos": [
+        {
+          "s_m": 316.0,
+          "a_frente_m": 35.0,
+          "percurso_m": 220.0,
+          "velocidade_kmh": 12.0
+        }
+      ]
+    }
+  }
+]

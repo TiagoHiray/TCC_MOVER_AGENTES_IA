@@ -1,0 +1,57 @@
+INFO    Servidor do painel e dos agentes em http://127.0.0.1:53837 (página em http://127.0.0.1:53837/, log ao vivo em ws://127.0.0.1:53837/ws)
+INFO    Servidor dos agentes: http://127.0.0.1:53837
+INFO    Abrindo a sessão dos agentes em http://127.0.0.1:53837 (na primeira vez o modelo de ML é treinado, ~1-2 min)...
+C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\.venv\Lib\site-packages\sklearn\base.py:525: InconsistentVersionWarning: Trying to unpickle estimator DecisionTreeRegressor from version 1.7.2 when using version 1.9.1. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\.venv\Lib\site-packages\sklearn\base.py:525: InconsistentVersionWarning: Trying to unpickle estimator RandomForestRegressor from version 1.7.2 when using version 1.9.1. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+INFO    LLM ollama:gemma2:2b pronto (aquecimento em 0.4 s).
+INFO    Agentes: 3 volta(s), LLM ollama:gemma2:2b, ML floresta aleatória (2000 situações simuladas).
+INFO    Agentes por HTTP: LLM ollama:gemma2:2b, especialista de ML floresta aleatória (2000 situações simuladas).
+INFO    CARLA 0.9.16 em localhost:2000
+INFO:  Found the required file in cache!  Carla/Maps/Nav/Town10HD_Opt.bin 
+INFO    Carregando o mapa Town10HD_Opt do CARLA (pode levar alguns segundos)...
+INFO:  Found the required file in cache!  Carla/Maps/Nav/Town10HD_Opt.bin 
+INFO    OpenDRIVE do mapa do CARLA (108 vias) salvo em C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\mapas\Town10HD_Opt_carla.xodr.
+INFO:  Found the required file in cache!  Carla/Maps/TM/Town10HD_Opt.bin 
+INFO    Topologia do CARLA: a rota de 783 m tem continuação em todas as faixas.
+INFO    Caminhão vehicle.carlamotors.european_hgv criado (id 330) na largada, com física.
+INFO    Física do caminhão no CARLA: massa_kg 7000, marchas 5, troca_marcha_s 0.1, cambio_automatico True, rpm_max 5730, amortecimento_sem_acelerador 2.0
+INFO    Benchmark no carla: 3 volta(s) por bateria; plano de 783 m por volta.
+INFO    O CARLA não desenha a cena durante o benchmark (a janela fica preta); use --com-render para ver.
+INFO    Bateria sem_agentes: 3 volta(s), o mais rápido que o simulador aguenta (o log mostra cada volta).
+INFO    Pedestre atravessando a faixa em s = 134 m da volta.
+INFO    Veículo a 12 km/h à frente do caminhão em s = 349 m da volta, por 220 m.
+INFO    Volta 1 de 3 (bruto): 176 s de simulação, 59 s de relógio.
+INFO    Pedestre atravessando a faixa em s = 134 m da volta.
+INFO    Veículo a 12 km/h à frente do caminhão em s = 349 m da volta, por 220 m.
+INFO    Volta 2 de 3 (bruto): 350 s de simulação, 117 s de relógio.
+INFO    Pedestre atravessando a faixa em s = 134 m da volta.
+INFO    Veículo a 12 km/h à frente do caminhão em s = 349 m da volta, por 220 m.
+INFO    Chegada (bruto): 3 volta(s) em 523 s de simulação, 175 s de relógio.
+INFO    Bateria sem_agentes: chegada em 174.7 s de relógio (10464 linhas, 0 decisões).
+INFO    Caminhão vehicle.carlamotors.european_hgv criado (id 337) na largada, com física.
+INFO    Física do caminhão no CARLA: massa_kg 7000, marchas 5, troca_marcha_s 0.1, cambio_automatico True, rpm_max 5730, amortecimento_sem_acelerador 2.0
+INFO    Bateria com_agentes: 3 volta(s), o mais rápido que o simulador aguenta (o log mostra cada volta).
+INFO    Pedestre atravessando a faixa em s = 134 m da volta.
+INFO    Veículo a 12 km/h à frente do caminhão em s = 349 m da volta, por 220 m.
+INFO    Volta 1 de 3 (agentes): 187 s de simulação, 72 s de relógio.
+INFO    Pedestre atravessando a faixa em s = 134 m da volta.
+INFO    Veículo a 12 km/h à frente do caminhão em s = 349 m da volta, por 220 m.
+INFO    Volta 2 de 3 (agentes): 370 s de simulação, 140 s de relógio.
+INFO    Pedestre atravessando a faixa em s = 134 m da volta.
+INFO    Veículo a 12 km/h à frente do caminhão em s = 349 m da volta, por 220 m.
+INFO    Chegada (agentes): 3 volta(s) em 554 s de simulação, 212 s de relógio.
+INFO    Bateria com_agentes: chegada em 212.2 s de relógio (11089 linhas, 18 decisões).
+               tipo           bateria volta   tempo_s  distancia_m  vel_media_kmh  combustivel_ml  custo_r     co2_g  eventos_atencao  eventos_criticos  eventos_total  jerk_max_mps3  acel_min_mps2  acel_max_mps2  energia_freio_wh
+    media_por_volta       sem_agentes         174.400      779.867         16.097          258.76    1.553   693.467            5.333            15.333         20.667         64.987        -13.653          6.323           330.367
+    media_por_volta       com_agentes         184.817      780.167         15.197          219.49    1.317   588.267            2.667             5.667          8.333         41.657         -9.167          6.553           204.167
+diferenca_por_volta         com - sem          10.417        0.300         -0.900          -39.27   -0.236  -105.200           -2.666            -9.666        -12.334        -23.330          4.486          0.230          -126.200
+      diferenca_pct (com - sem) / sem           5.970        0.040         -5.590          -15.18  -15.200   -15.170          -49.990           -63.040        -59.680        -35.900        -32.860          3.640           -38.200
+   total_100_voltas       sem_agentes   100 17367.250    78096.600            NaN        25116.49  150.700 67312.900          598.000          1404.000       2002.000            NaN            NaN            NaN         30808.900
+   total_100_voltas       com_agentes   100 18271.500    78068.400            NaN        21606.59  129.640 57908.400            8.000           599.000        607.000            NaN            NaN            NaN         19634.200
+
+Com os agentes, cada volta gastou -15.2 % de diesel, +6.0 % de tempo e -60 % de eventos bruscos. Em 100 voltas: 25.1 L sem agentes x 21.6 L com agentes = 3.5 L (R$ 21.06; 9.4 kg de CO2), 2002 x 607 eventos bruscos, +15.1 min.
+INFO    Resultados em C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\apresentacao\20261023_0218_town10\modos\05_completo\benchmark

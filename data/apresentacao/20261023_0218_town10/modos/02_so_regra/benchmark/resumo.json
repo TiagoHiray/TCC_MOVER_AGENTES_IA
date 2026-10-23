@@ -1,0 +1,97 @@
+{
+  "data": "2026-10-23T02:25:15",
+  "simulador": "carla",
+  "voltas": 3,
+  "combustivel": "diesel",
+  "preco_r_l": 6.0,
+  "co2_kg_l": 2.68,
+  "modelo_consumo": "VT-CPFM sobre a velocidade medida: potência pela energia cinética da velocidade suavizada (média de dois ticks e média móvel exponencial de 0.16 s) mais arrasto, rolamento e rampa; o mesmo medidor do painel",
+  "llm_decisoes": null,
+  "suavizador_ml": null,
+  "agentes_http": "http://127.0.0.1:62297",
+  "requisicoes_agentes": 20,
+  "decisoes": 18,
+  "decisoes_por_origem": {
+    "llm": 0,
+    "regra": 18
+  },
+  "opcoes": {
+    "economica": 17,
+    "firme": 1
+  },
+  "fim": {
+    "sem_agentes": "chegada",
+    "com_agentes": "chegada"
+  },
+  "sem_agentes": {
+    "voltas": 3,
+    "por_volta": {
+      "tempo_s": 174.4,
+      "distancia_m": 779.867,
+      "vel_media_kmh": 16.097,
+      "combustivel_ml": 258.76,
+      "custo_r": 1.553,
+      "co2_g": 693.467,
+      "eventos_atencao": 5.333,
+      "eventos_criticos": 15.333,
+      "eventos_total": 20.667,
+      "jerk_max_mps3": 64.987,
+      "acel_min_mps2": -13.653,
+      "acel_max_mps2": 6.323,
+      "energia_freio_wh": 330.367
+    },
+    "total": {
+      "tempo_s": 523.2,
+      "combustivel_ml": 776.28,
+      "custo_r": 4.658,
+      "co2_g": 2080.4,
+      "eventos_total": 62.0
+    }
+  },
+  "com_agentes": {
+    "voltas": 3,
+    "por_volta": {
+      "tempo_s": 185.983,
+      "distancia_m": 780.4,
+      "vel_media_kmh": 15.107,
+      "combustivel_ml": 213.103,
+      "custo_r": 1.279,
+      "co2_g": 571.1,
+      "eventos_atencao": 2.667,
+      "eventos_criticos": 9.333,
+      "eventos_total": 12.0,
+      "jerk_max_mps3": 37.09,
+      "acel_min_mps2": -9.293,
+      "acel_max_mps2": 6.57,
+      "energia_freio_wh": 182.5
+    },
+    "total": {
+      "tempo_s": 557.95,
+      "combustivel_ml": 639.31,
+      "custo_r": 3.836,
+      "co2_g": 1713.3,
+      "eventos_total": 36.0
+    }
+  },
+  "diferenca_pct": {
+    "combustivel_ml": -17.64,
+    "tempo_s": 6.64,
+    "eventos_total": -41.94,
+    "energia_freio_wh": -44.76
+  },
+  "extrapolacao": {
+    "voltas": 100,
+    "litros_sem_agentes": 25.12,
+    "litros_com_agentes": 21.17,
+    "economia_l": 3.95,
+    "economia_r": 23.7,
+    "economia_co2_kg": 10.59,
+    "eventos_sem_agentes": 2002,
+    "eventos_com_agentes": 1297,
+    "tempo_extra_min": 17.1
+  },
+  "arquivos": {
+    "resultados": "data/apresentacao/20261023_0218_town10/modos/02_so_regra/benchmark/resultados.csv",
+    "figura": "data/apresentacao/20261023_0218_town10/modos/02_so_regra/benchmark/comparativo.png"
+  }
+}

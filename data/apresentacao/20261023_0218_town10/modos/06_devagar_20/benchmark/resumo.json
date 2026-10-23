@@ -1,0 +1,97 @@
+{
+  "data": "2026-10-23T02:52:56",
+  "simulador": "carla",
+  "voltas": 3,
+  "combustivel": "diesel",
+  "preco_r_l": 6.0,
+  "co2_kg_l": 2.68,
+  "modelo_consumo": "VT-CPFM sobre a velocidade medida: potência pela energia cinética da velocidade suavizada (média de dois ticks e média móvel exponencial de 0.16 s) mais arrasto, rolamento e rampa; o mesmo medidor do painel",
+  "llm_decisoes": "ollama:gemma2:2b",
+  "suavizador_ml": "floresta aleatória (2000 situações simuladas)",
+  "agentes_http": "http://127.0.0.1:56944",
+  "requisicoes_agentes": 21,
+  "decisoes": 19,
+  "decisoes_por_origem": {
+    "llm": 15,
+    "regra": 4
+  },
+  "opcoes": {
+    "firme": 1,
+    "ml": 18
+  },
+  "fim": {
+    "sem_agentes": "chegada",
+    "com_agentes": "chegada"
+  },
+  "sem_agentes": {
+    "voltas": 3,
+    "por_volta": {
+      "tempo_s": 184.583,
+      "distancia_m": 779.933,
+      "vel_media_kmh": 15.21,
+      "combustivel_ml": 219.51,
+      "custo_r": 1.317,
+      "co2_g": 588.3,
+      "eventos_atencao": 4.667,
+      "eventos_criticos": 14.667,
+      "eventos_total": 19.333,
+      "jerk_max_mps3": 57.533,
+      "acel_min_mps2": -10.28,
+      "acel_max_mps2": 6.46,
+      "energia_freio_wh": 194.067
+    },
+    "total": {
+      "tempo_s": 553.75,
+      "combustivel_ml": 658.53,
+      "custo_r": 3.951,
+      "co2_g": 1764.9,
+      "eventos_total": 58.0
+    }
+  },
+  "com_agentes": {
+    "voltas": 3,
+    "por_volta": {
+      "tempo_s": 190.35,
+      "distancia_m": 780.4,
+      "vel_media_kmh": 14.757,
+      "combustivel_ml": 204.37,
+      "custo_r": 1.226,
+      "co2_g": 547.7,
+      "eventos_atencao": 2.0,
+      "eventos_criticos": 6.667,
+      "eventos_total": 8.667,
+      "jerk_max_mps3": 34.0,
+      "acel_min_mps2": -7.617,
+      "acel_max_mps2": 6.673,
+      "energia_freio_wh": 147.067
+    },
+    "total": {
+      "tempo_s": 571.05,
+      "combustivel_ml": 613.11,
+      "custo_r": 3.679,
+      "co2_g": 1643.1,
+      "eventos_total": 26.0
+    }
+  },
+  "diferenca_pct": {
+    "combustivel_ml": -6.9,
+    "tempo_s": 3.12,
+    "eventos_total": -55.17,
+    "energia_freio_wh": -24.22
+  },
+  "extrapolacao": {
+    "voltas": 100,
+    "litros_sem_agentes": 21.87,
+    "litros_com_agentes": 20.01,
+    "economia_l": 1.86,
+    "economia_r": 11.17,
+    "economia_co2_kg": 4.99,
+    "eventos_sem_agentes": 1998,
+    "eventos_com_agentes": 608,
+    "tempo_extra_min": 9.0
+  },
+  "arquivos": {
+    "resultados": "data/apresentacao/20261023_0218_town10/modos/06_devagar_20/benchmark/resultados.csv",
+    "figura": "data/apresentacao/20261023_0218_town10/modos/06_devagar_20/benchmark/comparativo.png"
+  }
+}

@@ -1,0 +1,260 @@
+{
+  "saida": "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10",
+  "mapa": "town10",
+  "configs": {
+    "config": "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+    "config_simulacao": "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+    "padrao": "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao.yaml",
+    "cruzeiro20": "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao_cruzeiro20.yaml"
+  },
+  "situacoes": [
+    {
+      "id": "pedestre",
+      "nome": "Pedestre atravessando na faixa",
+      "pergunta": "Como o caminhão se comporta com um pedestre atravessando?",
+      "s_ini": 73.5,
+      "s_fim": 158.5,
+      "figurantes": {
+        "pedestres": [
+          {
+            "s_m": 133.5,
+            "gatilho_m": 30.0,
+            "lado_m": 6.0,
+            "atravessar_m": 14.0,
+            "velocidade_mps": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "veiculo",
+      "nome": "Veículo lento à frente (12 km/h)",
+      "pergunta": "Como o caminhão se comporta com outro veículo à frente?",
+      "s_ini": 311.0,
+      "s_fim": 566.0,
+      "figurantes": {
+        "veiculos": [
+          {
+            "s_m": 316.0,
+            "a_frente_m": 35.0,
+            "percurso_m": 220.0,
+            "velocidade_kmh": 12.0
+          }
+        ]
+      }
+    }
+  ],
+  "modos": [
+    {
+      "id": "so_carla",
+      "nome": "Só o CARLA (Traffic Manager)",
+      "benchmark": "(bateria sem agentes do completo)",
+      "corrida": [
+        "mover.autonomo.dirigir",
+        "--voltas",
+        "1",
+        "--config",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+        "--config-simulacao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+        "--missao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao.yaml",
+        "--provedor",
+        "ollama",
+        "--camera",
+        "perseguicao",
+        "--sem-navegador",
+        "--sem-agentes"
+      ]
+    },
+    {
+      "id": "so_regra",
+      "nome": "Só a regra (opções fixas)",
+      "benchmark": [
+        "mover.autonomo.benchmark",
+        "--voltas",
+        "3",
+        "--config",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+        "--config-simulacao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+        "--missao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao.yaml",
+        "--provedor",
+        "ollama",
+        "--saida",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\modos\\02_so_regra\\benchmark",
+        "--silencioso",
+        "--sem-ml",
+        "--sem-llm"
+      ],
+      "corrida": [
+        "mover.autonomo.dirigir",
+        "--voltas",
+        "1",
+        "--config",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+        "--config-simulacao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+        "--missao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao.yaml",
+        "--provedor",
+        "ollama",
+        "--camera",
+        "perseguicao",
+        "--sem-navegador",
+        "--sem-ml",
+        "--sem-llm"
+      ]
+    },
+    {
+      "id": "so_ml",
+      "nome": "Só o ML (floresta aleatória)",
+      "benchmark": [
+        "mover.autonomo.benchmark",
+        "--voltas",
+        "3",
+        "--config",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+        "--config-simulacao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+        "--missao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao.yaml",
+        "--provedor",
+        "ollama",
+        "--saida",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\modos\\03_so_ml\\benchmark",
+        "--silencioso",
+        "--sem-llm"
+      ],
+      "corrida": [
+        "mover.autonomo.dirigir",
+        "--voltas",
+        "1",
+        "--config",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+        "--config-simulacao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+        "--missao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao.yaml",
+        "--provedor",
+        "ollama",
+        "--camera",
+        "perseguicao",
+        "--sem-navegador",
+        "--sem-llm"
+      ]
+    },
+    {
+      "id": "so_llm",
+      "nome": "Só o LLM (sobre as opções fixas)",
+      "benchmark": [
+        "mover.autonomo.benchmark",
+        "--voltas",
+        "3",
+        "--config",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+        "--config-simulacao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+        "--missao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao.yaml",
+        "--provedor",
+        "ollama",
+        "--saida",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\modos\\04_so_llm\\benchmark",
+        "--silencioso",
+        "--sem-ml"
+      ],
+      "corrida": [
+        "mover.autonomo.dirigir",
+        "--voltas",
+        "1",
+        "--config",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+        "--config-simulacao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+        "--missao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao.yaml",
+        "--provedor",
+        "ollama",
+        "--camera",
+        "perseguicao",
+        "--sem-navegador",
+        "--sem-ml"
+      ]
+    },
+    {
+      "id": "completo",
+      "nome": "Completo: ML + regra + LLM",
+      "benchmark": [
+        "mover.autonomo.benchmark",
+        "--voltas",
+        "3",
+        "--config",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+        "--config-simulacao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+        "--missao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao.yaml",
+        "--provedor",
+        "ollama",
+        "--saida",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\modos\\05_completo\\benchmark",
+        "--silencioso"
+      ],
+      "corrida": [
+        "mover.autonomo.dirigir",
+        "--voltas",
+        "1",
+        "--config",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+        "--config-simulacao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+        "--missao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao.yaml",
+        "--provedor",
+        "ollama",
+        "--camera",
+        "perseguicao",
+        "--sem-navegador"
+      ]
+    },
+    {
+      "id": "devagar_20",
+      "nome": "Só o CARLA a 20 km/h (controle)",
+      "benchmark": [
+        "mover.autonomo.benchmark",
+        "--voltas",
+        "3",
+        "--config",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+        "--config-simulacao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+        "--missao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao_cruzeiro20.yaml",
+        "--provedor",
+        "ollama",
+        "--saida",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\modos\\06_devagar_20\\benchmark",
+        "--silencioso"
+      ],
+      "corrida": [
+        "mover.autonomo.dirigir",
+        "--voltas",
+        "1",
+        "--config",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\autonomo.yaml",
+        "--config-simulacao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\simulacao.yaml",
+        "--missao",
+        "C:\\CARLA_0.9.16\\PythonAPI\\TCC_MOVER_AGENTES_IA\\data\\apresentacao\\20261023_0218_town10\\config\\missao_cruzeiro20.yaml",
+        "--provedor",
+        "ollama",
+        "--camera",
+        "perseguicao",
+        "--sem-navegador",
+        "--sem-agentes"
+      ]
+    }
+  ]
+}

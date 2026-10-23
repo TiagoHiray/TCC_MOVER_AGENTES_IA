@@ -1,0 +1,26 @@
+INFO    Plano de missão: rota de 783 m (anti-horário), 6 zonas, 0 parada(s); 1 volta(s), modo bruto.
+INFO    Servidor do painel e dos agentes em http://127.0.0.1:8000 (página em http://127.0.0.1:8000/, log ao vivo em ws://127.0.0.1:8000/ws)
+INFO    Servidor do painel: http://127.0.0.1:8000
+INFO    Painel (simulação, gráficos, log e chat): http://127.0.0.1:8000/
+INFO    Mapa OpenDRIVE: 108 vias, 12153 pontos de centro de faixa (driving); geoReference: +proj=tmerc +lat_0=0 +lon_0=0 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +geoidgrids=egm96_15.gtx +vunits=m +no_defs; offset: None
+INFO    Cena recebida (piloto): 168 vias, rota de 783 m, 6 zonas e 0 paradas.
+INFO    CARLA 0.9.16 em localhost:2000
+INFO:  Found the required file in cache!  Carla/Maps/Nav/Town10HD_Opt.bin 
+INFO    Carregando o mapa Town10HD_Opt do CARLA (pode levar alguns segundos)...
+INFO:  Found the required file in cache!  Carla/Maps/Nav/Town10HD_Opt.bin 
+INFO    OpenDRIVE do mapa do CARLA (108 vias) salvo em C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\mapas\Town10HD_Opt_carla.xodr.
+INFO:  Found the required file in cache!  Carla/Maps/TM/Town10HD_Opt.bin 
+INFO    Topologia do CARLA: a rota de 783 m tem continuação em todas as faixas.
+INFO    Caminhão vehicle.carlamotors.european_hgv criado (id 539) na largada, com física.
+INFO    Física do caminhão no CARLA: massa_kg 7000, marchas 5, troca_marcha_s 0.1, cambio_automatico True, rpm_max 5730, amortecimento_sem_acelerador 2.0
+INFO    Câmera do painel: 640x360 a 10 fps, 12 m atrás e 5 m acima do caminhão.
+INFO    Supervisor com LLM ollama:gemma2:2b
+INFO    Sessão 20261023_031247: bruto, 1 volta(s), simulador carla, LLM das decisões -, dos logs ollama:gemma2:2b
+INFO    Sessão 20261023_031247 aberta. Partindo!
+INFO    Pedestre atravessando a faixa em s = 134 m da volta.
+INFO    Veículo a 12 km/h à frente do caminhão em s = 349 m da volta, por 220 m.
+INFO    Chegada (bruto): 1 volta(s) em 185 s de simulação, 185 s de relógio.
+Corrida bruto (carla, 1 volta(s), fim: chegada): 184.9 s, 778 m, 226 mL (R$ 1.36), eventos bruscos 4 de atenção e 15 críticos; 0 decisões (0 do LLM).
+INFO    Corrida gravada em C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\autonomo\corridas\20261023_031246_bruto
+INFO    Log da sessão: C:\CARLA_0.9.16\PythonAPI\TCC_MOVER_AGENTES_IA\data\autonomo\sessoes\sessao_20261023_031247.jsonl
+INFO    Corrida concluída. Painel e chat seguem em http://127.0.0.1:8000/ (Ctrl+C para sair).

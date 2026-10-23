@@ -1,0 +1,76 @@
+mapa:
+  arquivo: data/mapas/Town10HD_Opt_carla.xodr
+  passo_m: 0.5
+  tipos_faixa:
+  - driving
+telemetria:
+  arquivo: data/tratado/telemetria_tratada.csv
+alinhamento:
+  peso_rumo_m: 3.0
+  icp:
+    ativo: true
+    max_rotacao_graus: 3.0
+    max_translacao_m: 5.0
+    escala_robusta_m: 1.5
+    dist_max_par_m: 10.0
+    max_iteracoes: 50
+    subamostragem: 4
+  correcao_borda:
+    ativa: true
+    margem_m: 0.5
+    suavizacao_s: 2.0
+    peso_curvatura: 32
+    dist_max_m: 15.0
+    max_desvio_rumo_graus: 25.0
+  saida:
+    pasta: data/simulacao
+carla:
+  host: localhost
+  porta: 2000
+  timeout_s: 60
+  passo_s: 0.05
+  carregar_mapa: true
+  mapa_carla: Town10HD_Opt
+  opendrive:
+    vertex_distance: 2.0
+    max_road_length: 50.0
+    wall_height: 0.0
+    additional_width: 0.6
+    smooth_junctions: true
+    enable_mesh_visibility: true
+    enable_pedestrian_navigation: true
+veiculo:
+  blueprint: vehicle.carlamotors.european_hgv
+  role_name: mover_gemeo
+camera:
+  modo: perseguicao
+  distancia_m: 16
+  altura_m: 8
+  inclinacao_graus: -20
+  altura_cima_m: 80
+camera_painel:
+  ativa: true
+  largura: 640
+  altura: 360
+  fps: 10
+  fov: 90
+  distancia_m: 12
+  altura_m: 5
+  inclinacao_graus: -15
+  qualidade_jpeg: 70
+servidor:
+  host: 127.0.0.1
+  porta: 8000
+  pasta_sessoes: data/autonomo/sessoes
+cenario:
+  pedestres:
+  - s_m: 133.5
+    gatilho_m: 30.0
+    lado_m: 6.0
+    atravessar_m: 14.0
+    velocidade_mps: 1.0
+  veiculos:
+  - s_m: 316.0
+    a_frente_m: 35.0
+    percurso_m: 220.0
+    velocidade_kmh: 12.0
