@@ -239,6 +239,17 @@ def encerrar(proc: subprocess.Popen | None) -> None:
         proc.kill()
 
 
+def fechar_navegadores(perfil: Path) -> None:
+    """Fecha as janelas abertas com este perfil: o Edge/Chrome às vezes repassa a janela a outro processo."""
+    if os.name != "nt":
+        return
+    filtro = str(perfil).replace("'", "''")
+    subprocess.run(["powershell", "-NoProfile", "-Command",
+                    "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
+                    f"$_.CommandLine.Contains('{filtro}') }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force "
+                    "-ErrorAction SilentlyContinue }"], capture_output=True)
+
+
 class GravadorTela:
     """Grava a área de trabalho com o ffmpeg do imageio-ffmpeg (gdigrab, só no Windows)."""
 
@@ -324,6 +335,7 @@ def rodar_corrida_gravando(cmd: list[str], pasta: Path, url: str, ffmpeg: str | 
         if gravador is not None:
             gravador.parar()
         encerrar(navegador)
+        fechar_navegadores(pasta.parent / "_navegador")
         encerrar(proc)
         leitor.join(timeout=5)
     estado["codigo"] = proc.returncode
